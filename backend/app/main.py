@@ -36,4 +36,4 @@ async def business_error_handler(request: Request, exc: BusinessError):
         status_code=400, content={"success": False, "message": str(exc.message)}
     )
 
-print ("AI Chat Pro API is running on http://localhost:8000")
+
