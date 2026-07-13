@@ -37,3 +37,4 @@ async def business_error_handler(request: Request, exc: BusinessError):
     )
 
 print("A")
+print("B")
