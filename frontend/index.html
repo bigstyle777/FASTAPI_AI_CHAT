@@ -5,79 +5,99 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Chat Pro</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 
 <body>
-    <div class="stars" id="stars"></div>
-
     <div id="loginPage" class="login-page">
-        <div class="login-container">
+        <div class="login-card">
+            <div class="brand-mark">AI</div>
             <h1>AI Chat Pro</h1>
-            <div class="tabs">
-                <button id="loginTab" class="tab active">登录</button>
-                <button id="registerTab" class="tab">注册</button>
+            <p class="login-subtitle">登录后继续你的智能对话工作台</p>
+
+            <div class="tabs" role="tablist">
+                <button id="loginTab" class="tab active" type="button">登录</button>
+                <button id="registerTab" class="tab" type="button">注册</button>
             </div>
 
             <form id="loginForm">
                 <div class="form-group">
                     <label>用户名</label>
-                    <input id="loginUsername" type="text" placeholder="请输入用户名">
+                    <input id="loginUsername" type="text" placeholder="请输入用户名" autocomplete="username">
                 </div>
                 <div class="form-group">
                     <label>密码</label>
-                    <input id="loginPassword" type="password" placeholder="请输入密码">
+                    <input id="loginPassword" type="password" placeholder="请输入密码" autocomplete="current-password">
                 </div>
-                <button id="loginBtn" type="button">登录</button>
+                <button id="loginBtn" class="primary-action" type="button">登录</button>
             </form>
 
             <form id="registerForm" style="display: none;">
                 <div class="form-group">
                     <label>用户名</label>
-                    <input id="registerUsername" type="text" placeholder="请输入用户名">
+                    <input id="registerUsername" type="text" placeholder="请输入用户名" autocomplete="username">
                 </div>
                 <div class="form-group">
                     <label>密码</label>
-                    <input id="registerPassword" type="password" placeholder="请输入密码，至少 6 位">
+                    <input id="registerPassword" type="password" placeholder="请输入密码，至少 6 位" autocomplete="new-password">
                 </div>
-                <button id="registerBtn" type="button">注册</button>
+                <button id="registerBtn" class="primary-action" type="button">注册</button>
             </form>
         </div>
     </div>
 
-    <div id="mainPage" class="container">
-        <div class="sidebar">
+    <div id="mainPage" class="app-shell">
+        <aside class="sidebar">
             <div class="sidebar-header">
-                <h2>AI Chat Pro</h2>
-                <p>你的智能助手</p>
+                <div class="brand-row">
+                    <span class="brand-mark small">AI</span>
+                    <div>
+                        <h2>AI Chat Pro</h2>
+                        <p>智能对话工作台</p>
+                    </div>
+                </div>
+                <button id="newChatBtn" type="button">新建聊天</button>
             </div>
-            <button id="newChatBtn">+ 新建聊天</button>
-            <div id="sessionList"></div>
-            <div class="sidebar-footer">
-                <button id="profileBtn" class="profile-btn">个人中心</button>
-                <button id="logoutBtn" class="logout-btn">退出登录</button>
-            </div>
-        </div>
 
-        <div class="chat">
-            <div id="messageNotice" class="notice"></div>
-            <div id="messages"></div>
-            <div class="input-area">
-                <input id="messageInput" type="text" placeholder="输入消息，开始对话...">
-                <button id="sendBtn">发送</button>
+            <div id="sessionList" aria-label="会话列表"></div>
+
+            <div class="sidebar-footer">
+                <button id="profileBtn" class="ghost-btn" type="button">个人中心</button>
+                <button id="logoutBtn" class="ghost-btn danger" type="button">退出登录</button>
             </div>
-        </div>
+        </aside>
+
+        <main class="chat">
+            <header class="chat-header">
+                <div>
+                    <h1>AI Assistant</h1>
+                    <p>清晰、连续、专注的对话体验</p>
+                </div>
+                <span class="status-pill">在线</span>
+            </header>
+
+            <div id="messageNotice" class="notice"></div>
+            <div id="messages">
+                <div class="empty-state">
+                    <div class="empty-icon">AI</div>
+                    <h2>开始一次新的对话</h2>
+                    <p>选择左侧会话，或新建聊天后输入你的问题。</p>
+                </div>
+            </div>
+
+            <div class="input-area">
+                <input id="messageInput" type="text" placeholder="输入消息，按 Enter 发送">
+                <button id="sendBtn" type="button" aria-label="发送消息">发送</button>
+            </div>
+        </main>
     </div>
 
     <div id="profilePage" class="profile-page" style="display: none;">
         <div class="profile-container">
-            <button id="backBtn" class="back-btn">返回</button>
+            <button id="backBtn" class="back-btn" type="button">返回</button>
             <h1>个人中心</h1>
 
-            <div class="profile-section">
+            <section class="profile-section">
                 <h2>用户信息</h2>
                 <div class="info-row">
                     <label>用户名</label>
@@ -87,14 +107,16 @@
                     <label>用户 ID</label>
                     <span id="profileUserId">--</span>
                 </div>
-            </div>
+            </section>
 
-            <div class="profile-section">
+            <section class="profile-section">
                 <h2>API 设置</h2>
-                <div class="form-group">
+                <div class="form-group api-key-row">
                     <label>API Key</label>
-                    <input id="apiKeyInput" type="password" placeholder="请输入你的 API Key">
-                    <button id="toggleApiKeyBtn" class="toggle-btn">显示</button>
+                    <div class="inline-field">
+                        <input id="apiKeyInput" type="password" placeholder="请输入你的 API Key">
+                        <button id="toggleApiKeyBtn" class="toggle-btn" type="button">显示</button>
+                    </div>
                 </div>
                 <div class="form-group">
                     <label>Provider</label>
@@ -103,8 +125,8 @@
                         <option value="openai">OpenAI</option>
                     </select>
                 </div>
-                <button id="saveSettingsBtn" class="save-btn">保存设置</button>
-            </div>
+                <button id="saveSettingsBtn" class="primary-action" type="button">保存设置</button>
+            </section>
         </div>
     </div>
 

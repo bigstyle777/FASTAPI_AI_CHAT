@@ -3,23 +3,6 @@ const API_BASE_URL = "http://127.0.0.1:8000";
 let currentSessionId = null;
 let isSendingMessage = false;
 
-function createStars() {
-    const starsContainer = document.getElementById('stars');
-    if (!starsContainer) return;
-
-    const starCount = 100;
-    for (let i = 0; i < starCount; i++) {
-        const star = document.createElement('div');
-        star.className = 'star';
-        star.style.left = Math.random() * 100 + '%';
-        star.style.top = Math.random() * 100 + '%';
-        star.style.animationDelay = Math.random() * 2 + 's';
-        star.style.width = Math.random() * 3 + 1 + 'px';
-        star.style.height = star.style.width;
-        starsContainer.appendChild(star);
-    }
-}
-
 function getToken() {
     return localStorage.getItem('token');
 }
@@ -75,6 +58,21 @@ function showMessageNotice(message, type = 'info') {
     if (!notice) return;
     notice.textContent = message;
     notice.className = `notice ${type}`;
+}
+
+function clearMessageNotice() {
+    showMessageNotice('', 'info');
+}
+
+function renderEmptyChat() {
+    const messagesContainer = document.getElementById('messages');
+    messagesContainer.innerHTML = `
+        <div class="empty-state">
+            <div class="empty-icon">AI</div>
+            <h2>开始一次新的对话</h2>
+            <p>选择左侧会话，或新建聊天后输入你的问题。</p>
+        </div>
+    `;
 }
 
 async function apiCall(url, options = {}) {
@@ -292,6 +290,7 @@ async function loadSessions() {
             });
         } else {
             sessionList.innerHTML = '<div class="empty-sessions">暂无会话</div>';
+            renderEmptyChat();
         }
     } catch (error) {
         console.error('加载会话失败:', error);
@@ -311,7 +310,8 @@ async function createNewSession() {
         const data = await response.json();
         if (data.session_id) {
             currentSessionId = data.session_id;
-            document.getElementById('messages').innerHTML = '';
+            renderEmptyChat();
+            clearMessageNotice();
             loadSessions();
         }
     } catch (error) {
@@ -322,6 +322,7 @@ async function createNewSession() {
 
 async function loadSessionMessages(sessionId) {
     currentSessionId = sessionId;
+    clearMessageNotice();
 
     document.querySelectorAll('.session-item').forEach((item) => {
         item.classList.remove('active');
@@ -338,13 +339,15 @@ async function loadSessionMessages(sessionId) {
         const messagesContainer = document.getElementById('messages');
         messagesContainer.innerHTML = '';
 
-        if (data.messages) {
+        if (data.messages && data.messages.length > 0) {
             data.messages.forEach((msg) => {
                 const msgDiv = document.createElement('div');
                 msgDiv.className = `message ${msg.role}`;
                 msgDiv.textContent = msg.content;
                 messagesContainer.appendChild(msgDiv);
             });
+        } else {
+            renderEmptyChat();
         }
 
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
@@ -371,9 +374,15 @@ async function sendMessage() {
 
     isSendingMessage = true;
     setLoadingState(true);
+    clearMessageNotice();
     input.value = '';
 
     const messagesContainer = document.getElementById('messages');
+    const emptyState = messagesContainer.querySelector('.empty-state');
+    if (emptyState) {
+        messagesContainer.innerHTML = '';
+    }
+
     const userMsgDiv = document.createElement('div');
     userMsgDiv.className = 'message user';
     userMsgDiv.textContent = userMessage;
@@ -465,6 +474,4 @@ document.addEventListener('DOMContentLoaded', () => {
             sendMessage();
         }
     });
-
-    createStars();
 });
