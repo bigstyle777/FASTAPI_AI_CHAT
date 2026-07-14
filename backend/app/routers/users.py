@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 
-from app.database import get_db
-from app.schemas import (
+from ..database import get_db
+from ..schemas import (
     RegisterRequest,
     RegisterResponse,
     LoginResponse,
@@ -9,8 +9,8 @@ from app.schemas import (
     SettingsRequest,
     SettingsResponse,
 )
-from app.services import register_user, login_user, get_settings_service, save_settings_service
-from app.auth import get_current_user
+from ..services import register_user, login_user, get_settings_service, save_settings_service
+from ..auth import get_current_user
 
 
 router = APIRouter(prefix="/users", tags=["Users"])

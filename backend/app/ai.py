@@ -67,7 +67,7 @@ def chat_with_ai(messages: list, user_id=None, db=None):
     api_key = None
     provider = "deepseek"
     if user_id is not None and db is not None:
-        from app.crud import get_user_settings
+        from .crud import get_user_settings
 
         row = get_user_settings(db, user_id)
         if row:
@@ -95,7 +95,7 @@ def chat_with_ai_stream(messages: list, user_id=None, db=None):
     api_key = None
     provider = "deepseek"
     if user_id is not None and db is not None:
-        from app.crud import get_user_settings
+        from .crud import get_user_settings
 
         row = get_user_settings(db, user_id)
         if row:

@@ -3,10 +3,10 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import users
-from app.routers import chat
-from app.exceptions import BusinessError
-from app.database import init_db
+from .routers import users
+from .routers import chat
+from .exceptions import BusinessError
+from .database import init_db
 
 
 app = FastAPI()

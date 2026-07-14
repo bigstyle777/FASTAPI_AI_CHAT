@@ -1,23 +1,23 @@
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
-from app.database import get_db
-from app.schemas import (
+from ..database import get_db
+from ..schemas import (
     CreateChatSessionRequest,
     ChatRequest,
     SessionListResponse,
     MessageListResponse,
     ChatResponse,
 )
-from app.services import create_session_service
-from app.auth import get_current_user
-from app.services import (
+from ..services import create_session_service
+from ..auth import get_current_user
+from ..services import (
     send_message_service,
     get_sessions_service,
     get_messages_service,
     send_message_stream_service,
 )
-from app.ai import chat_with_ai_stream
+from ..ai import chat_with_ai_stream
 
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
