@@ -6,7 +6,7 @@ let isSendingMessage = false;
 function createStars() {
     const starsContainer = document.getElementById('stars');
     if (!starsContainer) return;
-    
+
     const starCount = 100;
     for (let i = 0; i < starCount; i++) {
         const star = document.createElement('div');
@@ -39,13 +39,21 @@ function isLoggedIn() {
 function setLoadingState(isLoading, buttonId = 'sendBtn') {
     const button = document.getElementById(buttonId);
     if (!button) return;
+
+    const defaultText = {
+        sendBtn: '发送',
+        loginBtn: '登录',
+        registerBtn: '注册',
+    };
+
     button.disabled = isLoading;
-    button.textContent = isLoading ? '发送中...' : (buttonId === 'sendBtn' ? 'Send' : '登录');
+    button.textContent = isLoading ? '处理中...' : (defaultText[buttonId] || '确定');
 }
 
 function showLoginPage() {
     document.getElementById('loginPage').style.display = 'flex';
     document.getElementById('mainPage').style.display = 'none';
+    document.getElementById('profilePage').style.display = 'none';
 }
 
 function showMainPage() {
@@ -124,13 +132,13 @@ async function loadProfile() {
             apiCall('/users/me'),
             apiCall('/users/settings')
         ]);
-        
+
         if (userResponse) {
             const userData = await userResponse.json();
             document.getElementById('profileUsername').textContent = userData.username || '--';
             document.getElementById('profileUserId').textContent = userData.user_id || '--';
         }
-        
+
         if (settingsResponse) {
             const settingsData = await settingsResponse.json();
             document.getElementById('apiKeyInput').value = settingsData.api_key || '';

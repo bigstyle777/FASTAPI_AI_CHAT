@@ -37,14 +37,14 @@ def _get_client(api_key=None, provider="deepseek"):
         return None
 
     provider = provider.lower() if provider else "deepseek"
-    
+
     if provider == "openai":
         base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
         model = os.getenv("AI_MODEL", "gpt-3.5-turbo")
     else:
         base_url = os.getenv("OPENAI_BASE_URL", "https://api.deepseek.com")
         model = os.getenv("AI_MODEL", "deepseek-chat")
-    
+
     return OpenAI(api_key=key, base_url=base_url), model
 
 

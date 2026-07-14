@@ -1,5 +1,6 @@
-from pydantic import BaseModel, Field
 from typing import Optional
+
+from pydantic import BaseModel, Field
 
 
 class RegisterRequest(BaseModel):
@@ -17,7 +18,7 @@ class CreateChatSessionRequest(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    session_id: int = Field(description="聊天会话的ID")
+    session_id: int = Field(description="聊天会话的 ID")
     message: str = Field(
         min_length=1, max_length=1000, description="用户发送的消息内容"
     )
@@ -30,8 +31,9 @@ class RegisterResponse(BaseModel):
 
 class LoginResponse(BaseModel):
     success: bool
-    access_token: str
+    access_token: str = ""
     token_type: str = "bearer"
+    message: Optional[str] = None
 
 
 class SessionResponse(BaseModel):

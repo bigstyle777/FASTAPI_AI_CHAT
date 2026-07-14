@@ -13,6 +13,7 @@
 
 <body>
     <div class="stars" id="stars"></div>
+
     <div id="loginPage" class="login-page">
         <div class="login-container">
             <h1>AI Chat Pro</h1>
@@ -20,7 +21,7 @@
                 <button id="loginTab" class="tab active">登录</button>
                 <button id="registerTab" class="tab">注册</button>
             </div>
-            
+
             <form id="loginForm">
                 <div class="form-group">
                     <label>用户名</label>
@@ -32,7 +33,7 @@
                 </div>
                 <button id="loginBtn" type="button">登录</button>
             </form>
-            
+
             <form id="registerForm" style="display: none;">
                 <div class="form-group">
                     <label>用户名</label>
@@ -40,7 +41,7 @@
                 </div>
                 <div class="form-group">
                     <label>密码</label>
-                    <input id="registerPassword" type="password" placeholder="请输入密码（至少6位）">
+                    <input id="registerPassword" type="password" placeholder="请输入密码，至少 6 位">
                 </div>
                 <button id="registerBtn" type="button">注册</button>
             </form>
@@ -51,31 +52,31 @@
         <div class="sidebar">
             <div class="sidebar-header">
                 <h2>AI Chat Pro</h2>
-                <p>您的智能助手</p>
+                <p>你的智能助手</p>
             </div>
             <button id="newChatBtn">+ 新建聊天</button>
             <div id="sessionList"></div>
             <div class="sidebar-footer">
-                <button id="profileBtn" class="profile-btn">👤 个人中心</button>
+                <button id="profileBtn" class="profile-btn">个人中心</button>
                 <button id="logoutBtn" class="logout-btn">退出登录</button>
             </div>
         </div>
-        
+
         <div class="chat">
             <div id="messageNotice" class="notice"></div>
             <div id="messages"></div>
             <div class="input-area">
                 <input id="messageInput" type="text" placeholder="输入消息，开始对话...">
-                <button id="sendBtn">Send</button>
+                <button id="sendBtn">发送</button>
             </div>
         </div>
     </div>
 
     <div id="profilePage" class="profile-page" style="display: none;">
         <div class="profile-container">
-            <button id="backBtn" class="back-btn">← 返回</button>
+            <button id="backBtn" class="back-btn">返回</button>
             <h1>个人中心</h1>
-            
+
             <div class="profile-section">
                 <h2>用户信息</h2>
                 <div class="info-row">
@@ -83,11 +84,11 @@
                     <span id="profileUsername">--</span>
                 </div>
                 <div class="info-row">
-                    <label>用户ID</label>
+                    <label>用户 ID</label>
                     <span id="profileUserId">--</span>
                 </div>
             </div>
-            
+
             <div class="profile-section">
                 <h2>API 设置</h2>
                 <div class="form-group">

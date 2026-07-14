@@ -63,7 +63,7 @@ def send_message_service(db, user, request):
 
     history = get_messages_by_session(db, request.session_id)
     messages = [{"role": role, "content": content} for role, content in history]
-    ai_reply = chat_with_ai(messages=messages)
+    ai_reply = chat_with_ai(messages=messages, user_id=user["user_id"], db=db)
 
     create_message(db, request.session_id, "assistant", ai_reply)
     update_session(db, request.session_id, ai_reply)
