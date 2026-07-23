@@ -40,7 +40,7 @@ def _get_client(api_key=None, provider="deepseek"):
 
     if provider == "openai":
         base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-        model = os.getenv("AI_MODEL", "gpt-3.5-turbo")
+        model = os.getenv("AI_MODEL", "gpt-4o-mini")
     else:
         base_url = os.getenv("OPENAI_BASE_URL", "https://api.deepseek.com")
         model = os.getenv("AI_MODEL", "deepseek-chat")
@@ -48,7 +48,10 @@ def _get_client(api_key=None, provider="deepseek"):
     return OpenAI(api_key=key, base_url=base_url), model
 
 
-def _build_fallback_reply(messages: list, api_key=None):
+def _build_fallback_reply(messages: list, api_key=None, error=None):
+    if error:
+        return f"AI 调用失败：{type(error).__name__}: {str(error)}"
+
     if not api_key:
         return (
             "当前 AI 服务暂时不可用，原因是未配置有效的 API Key。"
@@ -63,9 +66,10 @@ def _build_fallback_reply(messages: list, api_key=None):
     return "当前 AI 服务暂时不可用，请稍后再试。"
 
 
-def chat_with_ai(messages: list, user_id=None, db=None):
+def _get_user_ai_settings(user_id=None, db=None):
     api_key = None
     provider = "deepseek"
+
     if user_id is not None and db is not None:
         from .crud import get_user_settings
 
@@ -74,6 +78,11 @@ def chat_with_ai(messages: list, user_id=None, db=None):
             api_key = row[0]
             provider = row[1] or "deepseek"
 
+    return api_key, provider
+
+
+def chat_with_ai(messages: list, user_id=None, db=None):
+    api_key, provider = _get_user_ai_settings(user_id=user_id, db=db)
     result = _get_client(api_key=api_key, provider=provider)
     if not result:
         return _build_fallback_reply(messages, api_key=api_key)
@@ -87,21 +96,12 @@ def chat_with_ai(messages: list, user_id=None, db=None):
         )
         content = response.choices[0].message.content
         return content or _build_fallback_reply(messages, api_key=api_key)
-    except Exception:
-        return _build_fallback_reply(messages, api_key=api_key)
+    except Exception as error:
+        return _build_fallback_reply(messages, api_key=api_key, error=error)
 
 
 def chat_with_ai_stream(messages: list, user_id=None, db=None):
-    api_key = None
-    provider = "deepseek"
-    if user_id is not None and db is not None:
-        from .crud import get_user_settings
-
-        row = get_user_settings(db, user_id)
-        if row:
-            api_key = row[0]
-            provider = row[1] or "deepseek"
-
+    api_key, provider = _get_user_ai_settings(user_id=user_id, db=db)
     result = _get_client(api_key=api_key, provider=provider)
     if not result:
         yield _build_fallback_reply(messages, api_key=api_key)
@@ -120,5 +120,5 @@ def chat_with_ai_stream(messages: list, user_id=None, db=None):
             content = chunk.choices[0].delta.content
             if content:
                 yield content
-    except Exception:
-        yield _build_fallback_reply(messages, api_key=api_key)
+    except Exception as error:
+        yield _build_fallback_reply(messages, api_key=api_key, error=error)
