@@ -1,17 +1,18 @@
-from .crud import get_user_by_username, create_user
-from .auth import create_token
-from .auth import hash_password, verify_password
+from .ai import chat_with_ai, chat_with_ai_stream
+from .auth import create_token, hash_password, verify_password
 from .crud import (
-    create_session,
-    get_session_by_user,
     create_message,
-    update_session,
+    create_session,
+    create_user,
+    get_messages_by_session,
+    get_session_by_user,
     get_sessions_by_user,
+    get_user_by_username,
+    get_user_settings,
+    save_user_settings,
+    update_session,
 )
-from .crud import get_messages_by_session, get_user_settings, save_user_settings
-from .ai import chat_with_ai
 from .exceptions import BusinessError
-from .ai import chat_with_ai_stream
 
 
 def register_user(db, request):
@@ -44,8 +45,7 @@ def login_user(db, request):
 
 def create_session_service(db, user, request):
     title = (request.title or "").strip() or "新会话"
-    user_id = user["user_id"]
-    session_id = create_session(db, user_id, title)
+    session_id = create_session(db, user["user_id"], title)
     return {"success": True, "session_id": session_id}
 
 
@@ -72,8 +72,7 @@ def send_message_service(db, user, request):
 
 
 def get_sessions_service(db, user):
-    user_id = user["user_id"]
-    sessions = get_sessions_by_user(db, user_id)
+    sessions = get_sessions_by_user(db, user["user_id"])
     result = []
     for session in sessions:
         result.append(
@@ -123,8 +122,8 @@ def send_message_stream_service(db, user, request):
 
         create_message(db, request.session_id, "assistant", ai_reply)
         update_session(db, request.session_id, ai_reply)
-    except Exception as e:
-        yield f"Error: {str(e)}"
+    except Exception as error:
+        yield f"Error: {str(error)}"
 
 
 def get_settings_service(db, user):

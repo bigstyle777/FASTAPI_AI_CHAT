@@ -26,8 +26,13 @@ app.add_middleware(
 )
 
 init_db()
-app.include_router(users.router)
-app.include_router(chat.router)
+
+app.include_router(
+    users.router
+)
+app.include_router(
+    chat.router
+)
 
 @app.middleware("http")
 async def log_request(request, call_next):

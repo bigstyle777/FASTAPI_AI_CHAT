@@ -20,7 +20,9 @@ class CreateChatSessionRequest(BaseModel):
 class ChatRequest(BaseModel):
     session_id: int = Field(description="聊天会话的 ID")
     message: str = Field(
-        min_length=1, max_length=1000, description="用户发送的消息内容"
+        min_length=1,
+        max_length=1000,
+        description="用户发送的消息内容",
     )
 
 
