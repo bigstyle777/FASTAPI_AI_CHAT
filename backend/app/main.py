@@ -29,6 +29,13 @@ init_db()
 app.include_router(users.router)
 app.include_router(chat.router)
 
+@app.middleware("http")
+async def log_request(request, call_next):
+    print(f"{request.method} {request.url}")
+
+    response = await call_next(request)
+
+    return response
 
 @app.exception_handler(BusinessError)
 async def business_error_handler(request: Request, exc: BusinessError):
