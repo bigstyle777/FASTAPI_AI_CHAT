@@ -75,8 +75,8 @@ def _get_user_ai_settings(user_id=None, db=None):
 
         row = get_user_settings(db, user_id)
         if row:
-            api_key = row[0]
-            provider = row[1] or "deepseek"
+            api_key = row.api_key
+            provider = row.provider or "deepseek"
 
     return api_key, provider
 

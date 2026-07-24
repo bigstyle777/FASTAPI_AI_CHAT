@@ -15,6 +15,14 @@ from .crud import (
 from .exceptions import BusinessError
 
 
+def _format_dt(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return value.isoformat(timespec="seconds")
+
+
 def register_user(db, request):
     username = request.username.strip()
     password = request.password.strip()
@@ -36,17 +44,17 @@ def login_user(db, request):
     if not user:
         return {"success": False, "message": "用户不存在"}
 
-    if not verify_password(password, user[2]):
+    if not verify_password(password, user.password):
         return {"success": False, "message": "密码错误"}
 
-    token = create_token({"user_id": user[0], "username": user[1]})
+    token = create_token({"user_id": user.id, "username": user.username})
     return {"success": True, "access_token": token, "token_type": "bearer"}
 
 
 def create_session_service(db, user, request):
     title = (request.title or "").strip() or "新会话"
-    session_id = create_session(db, user["user_id"], title)
-    return {"success": True, "session_id": session_id}
+    chat_session = create_session(db, user["user_id"], title)
+    return {"success": True, "session_id": chat_session.id}
 
 
 def send_message_service(db, user, request):
@@ -62,7 +70,7 @@ def send_message_service(db, user, request):
     update_session(db, request.session_id, message)
 
     history = get_messages_by_session(db, request.session_id)
-    messages = [{"role": role, "content": content} for role, content in history]
+    messages = [{"role": item.role, "content": item.content} for item in history]
     ai_reply = chat_with_ai(messages=messages, user_id=user["user_id"], db=db)
 
     create_message(db, request.session_id, "assistant", ai_reply)
@@ -77,11 +85,11 @@ def get_sessions_service(db, user):
     for session in sessions:
         result.append(
             {
-                "session_id": session[0],
-                "title": session[1],
-                "last_message": session[2],
-                "created_at": session[3],
-                "updated_at": session[4],
+                "session_id": session.id,
+                "title": session.title,
+                "last_message": session.last_message,
+                "created_at": _format_dt(session.created_at),
+                "updated_at": _format_dt(session.updated_at),
             }
         )
     return {"success": True, "sessions": result}
@@ -93,7 +101,7 @@ def get_messages_service(db, user, session_id):
         raise BusinessError("会话不存在或已删除")
 
     history = get_messages_by_session(db, session_id)
-    messages = [{"role": role, "content": content} for role, content in history]
+    messages = [{"role": item.role, "content": item.content} for item in history]
     return {"success": True, "messages": messages}
 
 
@@ -113,7 +121,7 @@ def send_message_stream_service(db, user, request):
         update_session(db, request.session_id, message)
 
         history = get_messages_by_session(db, request.session_id)
-        messages = [{"role": role, "content": content} for role, content in history]
+        messages = [{"role": item.role, "content": item.content} for item in history]
 
         ai_reply = ""
         for chunk in chat_with_ai_stream(messages, user_id=user["user_id"], db=db):
@@ -127,14 +135,22 @@ def send_message_stream_service(db, user, request):
 
 
 def get_settings_service(db, user):
-    row = get_user_settings(db, user["user_id"])
-    if not row:
+    settings = get_user_settings(db, user["user_id"])
+    if not settings:
         return {"success": True, "api_key": None, "provider": "deepseek"}
-    return {"success": True, "api_key": row[0], "provider": row[1] or "deepseek"}
+    return {
+        "success": True,
+        "api_key": settings.api_key,
+        "provider": settings.provider or "deepseek",
+    }
 
 
 def save_settings_service(db, user, request):
     api_key = (request.api_key or "").strip()
     provider = (request.provider or "deepseek").strip().lower() or "deepseek"
-    save_user_settings(db, user["user_id"], api_key, provider)
-    return {"success": True, "api_key": api_key, "provider": provider}
+    settings = save_user_settings(db, user["user_id"], api_key, provider)
+    return {
+        "success": True,
+        "api_key": settings.api_key,
+        "provider": settings.provider,
+    }

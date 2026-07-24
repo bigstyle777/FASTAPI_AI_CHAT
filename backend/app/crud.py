@@ -1,21 +1,13 @@
 from datetime import datetime
 
+from sqlalchemy import select
+
 from .models import ChatSession, Message, User, UserSetting
 
 
-def _format_dt(value):
-    if value is None:
-        return None
-    if isinstance(value, str):
-        return value
-    return value.isoformat(timespec="seconds")
-
-
 def get_user_by_username(db, username):
-    user = db.query(User).filter(User.username == username).first()
-    if not user:
-        return None
-    return (user.id, user.username, user.password)
+    stmt = select(User).where(User.username == username)
+    return db.execute(stmt).scalar_one_or_none()
 
 
 def create_user(db, username, password):
@@ -23,21 +15,21 @@ def create_user(db, username, password):
     db.add(user)
     db.commit()
     db.refresh(user)
-    return user.id
+    return user
 
 
 def create_session(db, user_id, title):
     now = datetime.now()
-    session = ChatSession(
+    chat_session = ChatSession(
         user_id=user_id,
         title=title,
         created_at=now,
         updated_at=now,
     )
-    db.add(session)
+    db.add(chat_session)
     db.commit()
-    db.refresh(session)
-    return session.id
+    db.refresh(chat_session)
+    return chat_session
 
 
 def create_message(db, session_id, role, content):
@@ -50,80 +42,59 @@ def create_message(db, session_id, role, content):
     db.add(message)
     db.commit()
     db.refresh(message)
-    return message.id
+    return message
 
 
 def update_session(db, session_id, last_message):
-    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    stmt = select(ChatSession).where(ChatSession.id == session_id)
+    session = db.execute(stmt).scalar_one_or_none()
     if not session:
-        return False
+        return None
+
     session.last_message = last_message
     session.updated_at = datetime.now()
     db.commit()
-    return True
+    db.refresh(session)
+    return session
 
 
 def get_sessions_by_user(db, user_id):
-    sessions = (
-        db.query(ChatSession)
-        .filter(ChatSession.user_id == user_id, ChatSession.is_deleted.is_(False))
-        .order_by(ChatSession.updated_at.desc(), ChatSession.id.desc())
-        .all()
-    )
-    return [
-        (
-            session.id,
-            session.title,
-            session.last_message,
-            _format_dt(session.created_at),
-            _format_dt(session.updated_at),
-        )
-        for session in sessions
-    ]
-
-
-def get_session_by_user(db, session_id, user_id):
-    session = (
-        db.query(ChatSession)
-        .filter(
-            ChatSession.id == session_id,
+    stmt = (
+        select(ChatSession)
+        .where(
             ChatSession.user_id == user_id,
             ChatSession.is_deleted.is_(False),
         )
-        .first()
+        .order_by(ChatSession.updated_at.desc(), ChatSession.id.desc())
     )
-    if not session:
-        return None
-    return (
-        session.id,
-        session.user_id,
-        session.title,
-        _format_dt(session.created_at),
-        _format_dt(session.updated_at),
-        session.last_message,
-        int(session.is_deleted),
+    return db.execute(stmt).scalars().all()
+
+
+def get_session_by_user(db, session_id, user_id):
+    stmt = select(ChatSession).where(
+        ChatSession.id == session_id,
+        ChatSession.user_id == user_id,
+        ChatSession.is_deleted.is_(False),
     )
+    return db.execute(stmt).scalar_one_or_none()
 
 
 def get_messages_by_session(db, session_id):
-    messages = (
-        db.query(Message)
-        .filter(Message.session_id == session_id)
+    stmt = (
+        select(Message)
+        .where(Message.session_id == session_id)
         .order_by(Message.id.asc())
-        .all()
     )
-    return [(message.role, message.content) for message in messages]
+    return db.execute(stmt).scalars().all()
 
 
 def get_user_settings(db, user_id):
-    settings = db.query(UserSetting).filter(UserSetting.user_id == user_id).first()
-    if not settings:
-        return None
-    return (settings.api_key, settings.provider)
+    stmt = select(UserSetting).where(UserSetting.user_id == user_id)
+    return db.execute(stmt).scalar_one_or_none()
 
 
 def save_user_settings(db, user_id, api_key, provider):
-    settings = db.query(UserSetting).filter(UserSetting.user_id == user_id).first()
+    settings = get_user_settings(db, user_id)
     if settings:
         settings.api_key = api_key
         settings.provider = provider
@@ -137,5 +108,7 @@ def save_user_settings(db, user_id, api_key, provider):
             updated_at=datetime.now(),
         )
         db.add(settings)
+
     db.commit()
-    return True
+    db.refresh(settings)
+    return settings
