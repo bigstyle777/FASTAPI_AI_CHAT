@@ -1,9 +1,30 @@
+import base64
+import random
+import uuid
+
 from .ai import chat_with_ai, chat_with_ai_stream
-from .auth import create_token, hash_password, verify_password
+from .auth import (
+    ACCESS_TOKEN_TTL_SECONDS,
+    cache_user,
+    create_login_session,
+    get_cached_user,
+    hash_password,
+    revoke_login_session,
+    verify_password,
+)
+from .core.config import settings
+from .core.redis import (
+    redis_delete,
+    redis_get,
+    redis_get_json,
+    redis_set,
+    redis_set_json,
+)
 from .crud import (
     create_message,
     create_session,
     create_user,
+    get_user_by_id,
     get_messages_by_session,
     get_session_by_user,
     get_sessions_by_user,
@@ -13,6 +34,94 @@ from .crud import (
     update_session,
 )
 from .exceptions import BusinessError
+
+CAPTCHA_TTL_SECONDS = settings.captcha_ttl_seconds
+USER_SETTINGS_CACHE_TTL_SECONDS = settings.user_settings_cache_ttl_seconds
+CAPTCHA_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+_random = random.SystemRandom()
+
+
+def _captcha_key(captcha_id):
+    return f"auth:captcha:{captcha_id}"
+
+
+def _settings_cache_key(user_id):
+    return f"user:settings:{user_id}"
+
+
+def _create_captcha_code(length=5):
+    return "".join(_random.choice(CAPTCHA_ALPHABET) for _ in range(length))
+
+
+def _create_captcha_image(code):
+    text_items = []
+    for index, char in enumerate(code):
+        x = 18 + index * 23
+        y = 34 + _random.randint(-3, 4)
+        rotate = _random.randint(-14, 14)
+        color = _random.choice(["#111827", "#0f766e", "#1d4ed8", "#7c2d12"])
+        text_items.append(
+            f'<text x="{x}" y="{y}" transform="rotate({rotate} {x} {y})" fill="{color}">{char}</text>'
+        )
+
+    line_items = []
+    for _ in range(4):
+        x1 = _random.randint(4, 120)
+        y1 = _random.randint(8, 42)
+        x2 = _random.randint(4, 120)
+        y2 = _random.randint(8, 42)
+        color = _random.choice(["#94a3b8", "#99f6e4", "#bfdbfe"])
+        line_items.append(
+            f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{color}" stroke-width="1" opacity="0.7"/>'
+        )
+
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="136" height="48" viewBox="0 0 136 48">'
+        '<rect width="136" height="48" rx="8" fill="#f8fafc"/>'
+        f'{"".join(line_items)}'
+        '<g font-family="Arial, sans-serif" font-size="24" font-weight="700" letter-spacing="2">'
+        f'{"".join(text_items)}'
+        "</g>"
+        "</svg>"
+    )
+    encoded = base64.b64encode(svg.encode("utf-8")).decode("ascii")
+    return f"data:image/svg+xml;base64,{encoded}"
+
+
+def create_captcha_service():
+    captcha_id = str(uuid.uuid4())
+    code = _create_captcha_code()
+    redis_set(_captcha_key(captcha_id), code.lower(), ttl=CAPTCHA_TTL_SECONDS)
+    return {
+        "success": True,
+        "captcha_id": captcha_id,
+        "image": _create_captcha_image(code),
+        "expires_in": CAPTCHA_TTL_SECONDS,
+    }
+
+
+def _verify_captcha(captcha_id, captcha_code):
+    if not captcha_id or not captcha_code:
+        return False
+
+    key = _captcha_key(captcha_id)
+    stored_code = redis_get(key)
+    if stored_code is None:
+        return False
+
+    if stored_code != captcha_code.strip().lower():
+        return False
+
+    redis_delete(key)
+    return True
+
+
+def _cache_settings(user_id, settings):
+    redis_set_json(
+        _settings_cache_key(user_id),
+        settings,
+        ttl=USER_SETTINGS_CACHE_TTL_SECONDS,
+    )
 
 
 def _format_dt(value):
@@ -37,6 +146,9 @@ def register_user(db, request):
 
 
 def login_user(db, request):
+    if not _verify_captcha(request.captcha_id, request.captcha_code):
+        return {"success": False, "message": "验证码错误或已过期"}
+
     username = request.username.strip()
     password = request.password.strip()
     user = get_user_by_username(db, username)
@@ -47,8 +159,32 @@ def login_user(db, request):
     if not verify_password(password, user.password):
         return {"success": False, "message": "密码错误"}
 
-    token = create_token({"user_id": user.id, "username": user.username})
-    return {"success": True, "access_token": token, "token_type": "bearer"}
+    token = create_login_session(user)
+    return {
+        "success": True,
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_in": ACCESS_TOKEN_TTL_SECONDS,
+    }
+
+
+def logout_user(token):
+    revoke_login_session(token)
+    return {"success": True, "message": "退出登录成功"}
+
+
+def get_user_profile_service(db, user):
+    cached_user = get_cached_user(user["user_id"])
+    if cached_user:
+        return {"success": True, **cached_user}
+
+    db_user = get_user_by_id(db, user["user_id"])
+    if not db_user:
+        raise BusinessError("用户不存在")
+
+    user_info = {"user_id": db_user.id, "username": db_user.username}
+    cache_user(user_info)
+    return {"success": True, **user_info}
 
 
 def create_session_service(db, user, request):
@@ -135,22 +271,31 @@ def send_message_stream_service(db, user, request):
 
 
 def get_settings_service(db, user):
+    cached_settings = redis_get_json(_settings_cache_key(user["user_id"]))
+    if cached_settings is not None:
+        return {"success": True, **cached_settings}
+
     settings = get_user_settings(db, user["user_id"])
     if not settings:
-        return {"success": True, "api_key": None, "provider": "deepseek"}
-    return {
-        "success": True,
+        result = {"api_key": None, "provider": "deepseek"}
+        _cache_settings(user["user_id"], result)
+        return {"success": True, **result}
+
+    result = {
         "api_key": settings.api_key,
         "provider": settings.provider or "deepseek",
     }
+    _cache_settings(user["user_id"], result)
+    return {"success": True, **result}
 
 
 def save_settings_service(db, user, request):
     api_key = (request.api_key or "").strip()
     provider = (request.provider or "deepseek").strip().lower() or "deepseek"
     settings = save_user_settings(db, user["user_id"], api_key, provider)
-    return {
-        "success": True,
+    result = {
         "api_key": settings.api_key,
         "provider": settings.provider,
     }
+    _cache_settings(user["user_id"], result)
+    return {"success": True, **result}

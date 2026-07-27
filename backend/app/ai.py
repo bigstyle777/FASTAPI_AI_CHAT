@@ -1,49 +1,27 @@
-import os
-from pathlib import Path
-
 try:
     from openai import OpenAI
 except Exception:  # pragma: no cover - optional dependency fallback
     OpenAI = None
 
-
-def _load_env_file():
-    for env_path in [
-        Path(__file__).resolve().parents[1] / ".env",
-        Path(__file__).resolve().parents[2] / ".env",
-    ]:
-        if not env_path.exists():
-            continue
-        for line in env_path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            key = key.strip()
-            value = value.strip().strip('"').strip("'")
-            if key and key not in os.environ:
-                os.environ[key] = value
-
-
-_load_env_file()
+from .core.config import settings
 
 
 def _get_client(api_key=None, provider="deepseek"):
     if OpenAI is None:
         return None
 
-    key = api_key or os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY")
+    key = api_key or settings.deepseek_api_key or settings.openai_api_key
     if not key:
         return None
 
     provider = provider.lower() if provider else "deepseek"
 
     if provider == "openai":
-        base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-        model = os.getenv("AI_MODEL", "gpt-4o-mini")
+        base_url = settings.openai_base_url
+        model = settings.openai_model
     else:
-        base_url = os.getenv("OPENAI_BASE_URL", "https://api.deepseek.com")
-        model = os.getenv("AI_MODEL", "deepseek-chat")
+        base_url = settings.deepseek_base_url
+        model = settings.deepseek_model
 
     return OpenAI(api_key=key, base_url=base_url), model
 

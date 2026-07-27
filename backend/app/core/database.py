@@ -1,17 +1,18 @@
-from pathlib import Path
-
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
+from .config import settings
 
-DB_PATH = Path(__file__).resolve().parents[1] / "data" / "chat.db"
+
+DB_PATH = settings.database_path
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-DATABASE_URL = f"sqlite:///{DB_PATH.as_posix()}"
+DATABASE_URL = settings.database_url
+connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False},
+    connect_args=connect_args,
 )
 
 SessionLocal = sessionmaker(
@@ -26,7 +27,7 @@ class Base(DeclarativeBase):
 
 
 def init_db():
-    from . import models
+    from .. import models
 
     Base.metadata.create_all(bind=engine)
 

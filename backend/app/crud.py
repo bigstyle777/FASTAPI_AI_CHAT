@@ -10,6 +10,11 @@ def get_user_by_username(db, username):
     return db.execute(stmt).scalar_one_or_none()
 
 
+def get_user_by_id(db, user_id):
+    stmt = select(User).where(User.id == user_id)
+    return db.execute(stmt).scalar_one_or_none()
+
+
 def create_user(db, username, password):
     user = User(username=username, password=password)
     db.add(user)

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
-from ..database import get_db
+from ..core.database import get_db
 from ..schemas import (
     CreateChatSessionRequest,
     ChatRequest,

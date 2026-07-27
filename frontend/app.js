@@ -2,6 +2,7 @@ const API_BASE_URL = "http://127.0.0.1:8000";
 
 let currentSessionId = null;
 let isSendingMessage = false;
+let currentCaptchaId = null;
 
 function getToken() {
     return localStorage.getItem('token');
@@ -13,6 +14,12 @@ function setToken(token) {
 
 function removeToken() {
     localStorage.removeItem('token');
+}
+
+function clearAuthState() {
+    removeToken();
+    currentSessionId = null;
+    showLoginPage();
 }
 
 function isLoggedIn() {
@@ -37,6 +44,7 @@ function showLoginPage() {
     document.getElementById('loginPage').style.display = 'flex';
     document.getElementById('mainPage').style.display = 'none';
     document.getElementById('profilePage').style.display = 'none';
+    loadCaptcha();
 }
 
 function showMainPage() {
@@ -75,13 +83,14 @@ function renderEmptyChat() {
     `;
 }
 
-async function apiCall(url, options = {}) {
+async function apiCall(url, options = {}, requestOptions = {}) {
+    const { auth = true, handleUnauthorized = true } = requestOptions;
     const headers = {
         'Content-Type': 'application/json',
         ...options.headers
     };
 
-    const token = getToken();
+    const token = auth ? getToken() : null;
     if (token) {
         headers['Authorization'] = `Bearer ${token}`;
     }
@@ -92,9 +101,9 @@ async function apiCall(url, options = {}) {
             headers
         });
 
-        if (response.status === 401) {
+        if (response.status === 401 && handleUnauthorized) {
             showMessageNotice('登录已过期，请重新登录', 'error');
-            handleLogout();
+            clearAuthState();
             return null;
         }
 
@@ -103,6 +112,38 @@ async function apiCall(url, options = {}) {
         console.error('网络请求失败:', error);
         showMessageNotice('网络请求失败，请检查后端服务是否运行', 'error');
         return null;
+    }
+}
+
+async function loadCaptcha() {
+    const captchaImage = document.getElementById('captchaImage');
+    const captchaInput = document.getElementById('loginCaptchaCode');
+    if (!captchaImage) return;
+
+    currentCaptchaId = null;
+    captchaImage.removeAttribute('src');
+
+    try {
+        const response = await apiCall('/users/captcha', { method: 'POST' }, {
+            auth: false,
+            handleUnauthorized: false
+        });
+        if (!response) return;
+
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            showMessageNotice(data.message || '验证码加载失败，请确认 Redis 服务已启动', 'error');
+            return;
+        }
+
+        currentCaptchaId = data.captcha_id;
+        captchaImage.src = data.image;
+        if (captchaInput) {
+            captchaInput.value = '';
+        }
+    } catch (error) {
+        console.error('加载验证码失败:', error);
+        showMessageNotice('验证码加载失败', 'error');
     }
 }
 
@@ -221,9 +262,10 @@ async function handleRegister() {
 async function handleLogin() {
     const username = document.getElementById('loginUsername').value.trim();
     const password = document.getElementById('loginPassword').value;
+    const captchaCode = document.getElementById('loginCaptchaCode').value.trim();
 
-    if (!username || !password) {
-        showMessageNotice('请输入用户名和密码', 'error');
+    if (!username || !password || !captchaCode || !currentCaptchaId) {
+        showMessageNotice('请输入用户名、密码和验证码', 'error');
         return;
     }
 
@@ -231,7 +273,12 @@ async function handleLogin() {
     try {
         const response = await apiCall('/users/login', {
             method: 'POST',
-            body: JSON.stringify({ username, password })
+            body: JSON.stringify({
+                username,
+                password,
+                captcha_id: currentCaptchaId,
+                captcha_code: captchaCode
+            })
         });
 
         if (!response) {
@@ -241,25 +288,30 @@ async function handleLogin() {
         const data = await response.json();
         if (data.success && data.access_token) {
             setToken(data.access_token);
+            currentCaptchaId = null;
             document.getElementById('loginUsername').value = '';
             document.getElementById('loginPassword').value = '';
+            document.getElementById('loginCaptchaCode').value = '';
             showMainPage();
             showMessageNotice('登录成功', 'success');
         } else {
             showMessageNotice(data.message || '登录失败', 'error');
+            await loadCaptcha();
         }
     } catch (error) {
         console.error('登录失败:', error);
         showMessageNotice('登录失败，请重试', 'error');
+        await loadCaptcha();
     } finally {
         setLoadingState(false, 'loginBtn');
     }
 }
 
-function handleLogout() {
-    removeToken();
-    currentSessionId = null;
-    showLoginPage();
+async function handleLogout() {
+    if (getToken()) {
+        await apiCall('/users/logout', { method: 'POST' }, { handleUnauthorized: false });
+    }
+    clearAuthState();
 }
 
 async function loadSessions() {
@@ -461,6 +513,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('registerBtn').addEventListener('click', handleRegister);
     document.getElementById('loginBtn').addEventListener('click', handleLogin);
     document.getElementById('logoutBtn').addEventListener('click', handleLogout);
+    document.getElementById('refreshCaptchaBtn').addEventListener('click', loadCaptcha);
     document.getElementById('newChatBtn').addEventListener('click', createNewSession);
     document.getElementById('sendBtn').addEventListener('click', sendMessage);
     document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);

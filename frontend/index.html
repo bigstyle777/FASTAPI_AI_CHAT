@@ -29,6 +29,15 @@
                     <label>密码</label>
                     <input id="loginPassword" type="password" placeholder="请输入密码" autocomplete="current-password">
                 </div>
+                <div class="form-group">
+                    <label>验证码</label>
+                    <div class="captcha-row">
+                        <input id="loginCaptchaCode" type="text" placeholder="请输入验证码" autocomplete="off" maxlength="10">
+                        <button id="refreshCaptchaBtn" class="captcha-button" type="button" aria-label="刷新验证码">
+                            <img id="captchaImage" alt="验证码">
+                        </button>
+                    </div>
+                </div>
                 <button id="loginBtn" class="primary-action" type="button">登录</button>
             </form>
 

@@ -170,6 +170,39 @@ button:disabled {
     box-shadow: 0 0 0 4px rgba(16, 163, 127, 0.12);
 }
 
+.captcha-row {
+    display: flex;
+    gap: 8px;
+}
+
+.captcha-row input {
+    min-width: 0;
+    flex: 1;
+}
+
+.captcha-button {
+    width: 136px;
+    height: 46px;
+    flex: 0 0 auto;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: #f8fafc;
+    cursor: pointer;
+}
+
+.captcha-button:hover {
+    border-color: rgba(16, 163, 127, 0.75);
+}
+
+.captcha-button img {
+    display: block;
+    width: 136px;
+    height: 48px;
+}
+
 .primary-action,
 #sendBtn,
 #newChatBtn {
