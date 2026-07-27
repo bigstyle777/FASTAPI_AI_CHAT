@@ -2,7 +2,7 @@ import base64
 import random
 import uuid
 
-from .ai import chat_with_ai, chat_with_ai_stream
+from .llm import chat_with_ai, chat_with_ai_stream
 from .auth import (
     ACCESS_TOKEN_TTL_SECONDS,
     cache_user,
@@ -12,15 +12,15 @@ from .auth import (
     revoke_login_session,
     verify_password,
 )
-from .core.config import settings
-from .core.redis import (
+from ..core.config import settings
+from ..core.redis import (
     redis_delete,
     redis_get,
     redis_get_json,
     redis_set,
     redis_set_json,
 )
-from .crud import (
+from ..crud import (
     create_message,
     create_session,
     create_user,
@@ -33,7 +33,7 @@ from .crud import (
     save_user_settings,
     update_session,
 )
-from .exceptions import BusinessError
+from ..exceptions import BusinessError
 
 CAPTCHA_TTL_SECONDS = settings.captcha_ttl_seconds
 USER_SETTINGS_CACHE_TTL_SECONDS = settings.user_settings_cache_ttl_seconds

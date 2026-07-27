@@ -12,7 +12,7 @@ from ..schemas import (
     SettingsResponse,
     UserProfileResponse,
 )
-from ..services import (
+from ..services.analytics import (
     create_captcha_service,
     get_settings_service,
     get_user_profile_service,
@@ -21,7 +21,7 @@ from ..services import (
     register_user,
     save_settings_service,
 )
-from ..auth import get_current_token, get_current_user
+from ..services.auth import get_current_token, get_current_user
 
 
 router = APIRouter(prefix="/users", tags=["Users"])

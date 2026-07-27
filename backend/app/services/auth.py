@@ -2,9 +2,9 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 
-from .core.config import settings
-from .core.redis import redis_delete, redis_get_json, redis_set_json
-from .core.security import (
+from ..core.config import settings
+from ..core.redis import redis_delete, redis_get_json, redis_set_json
+from ..core.security import (
     create_access_token,
     decode_token,
     hash_password,

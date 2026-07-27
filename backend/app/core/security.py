@@ -7,13 +7,13 @@ from jose import jwt
 
 from .config import settings
 
-
+# 注册用
 def hash_password(password: str) -> str:
     password_bytes = password.encode()
     hashed = bcrypt.hashpw(password_bytes, bcrypt.gensalt())
     return hashed.decode()
 
-
+# 登入用 JWT
 def verify_password(password: str, hashed_password: str) -> bool:
     password_bytes = password.encode()
     hashed_bytes = hashed_password.encode()
@@ -30,7 +30,7 @@ def create_access_token(data: dict, ttl_seconds: int | None = None) -> str:
     to_encode.update({"exp": expire, "jti": str(uuid.uuid4())})
     return jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
-
+# token 处理
 def decode_token(token: str) -> dict:
     return jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
 

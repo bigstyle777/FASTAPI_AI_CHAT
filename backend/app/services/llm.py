@@ -3,7 +3,7 @@ try:
 except Exception:  # pragma: no cover - optional dependency fallback
     OpenAI = None
 
-from .core.config import settings
+from ..core.config import settings
 
 
 def _get_client(api_key=None, provider="deepseek"):
@@ -49,7 +49,7 @@ def _get_user_ai_settings(user_id=None, db=None):
     provider = "deepseek"
 
     if user_id is not None and db is not None:
-        from .crud import get_user_settings
+        from ..crud import get_user_settings
 
         row = get_user_settings(db, user_id)
         if row:

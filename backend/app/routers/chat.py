@@ -9,15 +9,15 @@ from ..schemas import (
     MessageListResponse,
     ChatResponse,
 )
-from ..services import create_session_service
-from ..auth import get_current_user
-from ..services import (
+from ..services.analytics import create_session_service
+from ..services.auth import get_current_user
+from ..services.analytics import (
     send_message_service,
     get_sessions_service,
     get_messages_service,
     send_message_stream_service,
 )
-from ..ai import chat_with_ai_stream
+from ..services.llm import chat_with_ai_stream
 
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
