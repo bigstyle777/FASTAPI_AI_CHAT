@@ -4,7 +4,7 @@ except Exception:  # pragma: no cover - optional dependency fallback
     OpenAI = None
 
 from ..core.config import settings
-
+from sqlalchemy.orm import Session
 
 def _get_client(api_key=None, provider="deepseek"):
     if OpenAI is None:
@@ -78,7 +78,7 @@ def chat_with_ai(messages: list, user_id=None, db=None):
         return _build_fallback_reply(messages, api_key=api_key, error=error)
 
 
-def chat_with_ai_stream(messages: list, user_id=None, db=None):
+def chat_with_ai_stream(messages: list, user_id:int|None=None, db:Session|None=None):
     api_key, provider = _get_user_ai_settings(user_id=user_id, db=db)
     result = _get_client(api_key=api_key, provider=provider)
     if not result:
