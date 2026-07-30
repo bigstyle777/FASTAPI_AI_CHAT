@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     user_settings_cache_ttl_seconds: int = 3600
     database_path: Path = DEFAULT_DATABASE_PATH
     database_url: str | None = None
+    chat_ttl_seconds:int = 60 *60
 
     @field_validator("database_path", mode="before")
     @classmethod

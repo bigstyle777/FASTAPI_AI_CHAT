@@ -3,6 +3,7 @@ const API_BASE_URL = "http://127.0.0.1:8000";
 let currentSessionId = null;
 let isSendingMessage = false;
 let currentCaptchaId = null;
+let currentSessionHasMessages = false;
 
 function getToken() {
     return localStorage.getItem('token');
@@ -16,14 +17,19 @@ function removeToken() {
     localStorage.removeItem('token');
 }
 
-function clearAuthState() {
-    removeToken();
-    currentSessionId = null;
-    showLoginPage();
-}
-
 function isLoggedIn() {
     return !!getToken();
+}
+
+function showMessageNotice(message, type = 'info') {
+    const notice = document.getElementById('messageNotice');
+    if (!notice) return;
+    notice.textContent = message;
+    notice.className = `notice ${type}`;
+}
+
+function clearMessageNotice() {
+    showMessageNotice('', 'info');
 }
 
 function setLoadingState(isLoading, buttonId = 'sendBtn') {
@@ -38,6 +44,17 @@ function setLoadingState(isLoading, buttonId = 'sendBtn') {
 
     button.disabled = isLoading;
     button.textContent = isLoading ? '处理中...' : (defaultText[buttonId] || '确定');
+}
+
+function renderEmptyChat() {
+    const messagesContainer = document.getElementById('messages');
+    messagesContainer.innerHTML = `
+        <div class="empty-state">
+            <div class="empty-icon">AI</div>
+            <h2>开始一次新的对话</h2>
+            <p>选择左侧会话，或新建聊天后输入你的问题。</p>
+        </div>
+    `;
 }
 
 function showLoginPage() {
@@ -56,31 +73,17 @@ function showMainPage() {
 }
 
 function showProfilePage() {
+    document.getElementById('loginPage').style.display = 'none';
     document.getElementById('mainPage').style.display = 'none';
     document.getElementById('profilePage').style.display = 'flex';
     loadProfile();
 }
 
-function showMessageNotice(message, type = 'info') {
-    const notice = document.getElementById('messageNotice');
-    if (!notice) return;
-    notice.textContent = message;
-    notice.className = `notice ${type}`;
-}
-
-function clearMessageNotice() {
-    showMessageNotice('', 'info');
-}
-
-function renderEmptyChat() {
-    const messagesContainer = document.getElementById('messages');
-    messagesContainer.innerHTML = `
-        <div class="empty-state">
-            <div class="empty-icon">AI</div>
-            <h2>开始一次新的对话</h2>
-            <p>选择左侧会话，或新建聊天后输入你的问题。</p>
-        </div>
-    `;
+function clearAuthState() {
+    removeToken();
+    currentSessionId = null;
+    currentSessionHasMessages = false;
+    showLoginPage();
 }
 
 async function apiCall(url, options = {}, requestOptions = {}) {
@@ -92,7 +95,7 @@ async function apiCall(url, options = {}, requestOptions = {}) {
 
     const token = auth ? getToken() : null;
     if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
+        headers.Authorization = `Bearer ${token}`;
     }
 
     try {
@@ -132,7 +135,7 @@ async function loadCaptcha() {
 
         const data = await response.json();
         if (!response.ok || !data.success) {
-            showMessageNotice(data.message || '验证码加载失败，请确认 Redis 服务已启动', 'error');
+            showMessageNotice(data.message || '验证码加载失败', 'error');
             return;
         }
 
@@ -151,12 +154,13 @@ async function loadSettings() {
     try {
         const response = await apiCall('/users/settings');
         if (!response) return;
+
         const data = await response.json();
         const apiKeyInput = document.getElementById('apiKeyInput');
+        const providerSelect = document.getElementById('providerSelect');
         if (apiKeyInput) {
             apiKeyInput.value = data.api_key || '';
         }
-        const providerSelect = document.getElementById('providerSelect');
         if (providerSelect) {
             providerSelect.value = data.provider || 'deepseek';
         }
@@ -191,6 +195,8 @@ async function loadProfile() {
 function toggleApiKeyVisibility() {
     const input = document.getElementById('apiKeyInput');
     const button = document.getElementById('toggleApiKeyBtn');
+    if (!input || !button) return;
+
     if (input.type === 'password') {
         input.type = 'text';
         button.textContent = '隐藏';
@@ -210,12 +216,9 @@ async function saveSettings() {
             body: JSON.stringify({ api_key: apiKey, provider })
         });
         if (!response) return;
+
         const data = await response.json();
-        if (data.success) {
-            showMessageNotice('设置已保存', 'success');
-        } else {
-            showMessageNotice('保存设置失败', 'error');
-        }
+        showMessageNotice(data.success ? '设置已保存' : '保存设置失败', data.success ? 'success' : 'error');
     } catch (error) {
         console.error('保存设置失败:', error);
         showMessageNotice('保存设置失败', 'error');
@@ -236,11 +239,8 @@ async function handleRegister() {
         const response = await apiCall('/users/register', {
             method: 'POST',
             body: JSON.stringify({ username, password })
-        });
-
-        if (!response) {
-            return;
-        }
+        }, { auth: false });
+        if (!response) return;
 
         const data = await response.json();
         if (data.success) {
@@ -279,11 +279,8 @@ async function handleLogin() {
                 captcha_id: currentCaptchaId,
                 captcha_code: captchaCode
             })
-        });
-
-        if (!response) {
-            return;
-        }
+        }, { auth: false });
+        if (!response) return;
 
         const data = await response.json();
         if (data.success && data.access_token) {
@@ -314,6 +311,208 @@ async function handleLogout() {
     clearAuthState();
 }
 
+function createSessionActionButton(label, title, onClick, extraClass = '') {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `session-action ${extraClass}`.trim();
+    button.textContent = label;
+    button.title = title;
+    button.setAttribute('aria-label', title);
+    button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        onClick();
+    });
+    return button;
+}
+
+function createSessionItem(session) {
+    const sessionId = Number(session.session_id);
+    const title = session.title || '新会话';
+    const lastMessage = session.last_message || '暂无消息';
+    const sessionItem = document.createElement('div');
+    sessionItem.className = 'session-item';
+    sessionItem.dataset.sessionId = sessionId;
+    if (Number(currentSessionId) === sessionId) {
+        sessionItem.classList.add('active');
+    }
+
+    const row = document.createElement('div');
+    row.className = 'session-row';
+
+    const content = document.createElement('div');
+    content.className = 'session-content';
+
+    const titleElement = document.createElement('div');
+    titleElement.className = 'session-title';
+    titleElement.textContent = title;
+
+    const lastMessageElement = document.createElement('div');
+    lastMessageElement.className = 'session-last-message';
+    lastMessageElement.textContent = lastMessage;
+
+    const actions = document.createElement('div');
+    actions.className = 'session-actions';
+    actions.appendChild(createSessionActionButton('✎', '修改会话名称', () => renameSession(sessionId, titleElement.textContent)));
+    actions.appendChild(createSessionActionButton('⌫', '清空聊天对话', () => clearSessionMessages(sessionId), 'warning'));
+    actions.appendChild(createSessionActionButton('×', '删除会话', () => deleteSession(sessionId), 'danger'));
+
+    content.appendChild(titleElement);
+    content.appendChild(lastMessageElement);
+    row.appendChild(content);
+    row.appendChild(actions);
+    sessionItem.appendChild(row);
+    sessionItem.onclick = () => loadSessionMessages(sessionId);
+    return sessionItem;
+}
+
+function renderActiveSessionStub(sessionId, title = '新会话') {
+    const sessionList = document.getElementById('sessionList');
+    const emptySessions = sessionList.querySelector('.empty-sessions');
+    if (emptySessions) {
+        emptySessions.remove();
+    }
+
+    document.querySelectorAll('.session-item').forEach((item) => {
+        item.classList.remove('active');
+    });
+
+    const existingItem = sessionList.querySelector(`.session-item[data-session-id="${sessionId}"]`);
+    if (existingItem) {
+        existingItem.remove();
+    }
+
+    const sessionItem = createSessionItem({
+        session_id: sessionId,
+        title,
+        last_message: '暂无消息'
+    });
+    sessionList.prepend(sessionItem);
+}
+
+async function deleteEmptyCurrentSession(nextSessionId = null) {
+    if (!currentSessionId || currentSessionHasMessages) {
+        return false;
+    }
+
+    if (nextSessionId && Number(currentSessionId) === Number(nextSessionId)) {
+        return false;
+    }
+
+    const sessionId = currentSessionId;
+    try {
+        const response = await apiCall(`/chat/session/${sessionId}`, { method: 'DELETE' });
+        if (response) {
+            await response.json().catch(() => null);
+        }
+    } catch (error) {
+        console.error('自动删除空会话失败:', error);
+    }
+
+    const sessionItem = document.querySelector(`.session-item[data-session-id="${sessionId}"]`);
+    if (sessionItem) {
+        sessionItem.remove();
+    }
+
+    if (Number(currentSessionId) === Number(sessionId)) {
+        currentSessionId = null;
+        currentSessionHasMessages = false;
+    }
+    return true;
+}
+
+async function renameSession(sessionId, currentTitle) {
+    const title = window.prompt('修改会话名称', currentTitle || '新会话');
+    if (title === null) return;
+
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) {
+        showMessageNotice('会话名称不能为空', 'error');
+        return;
+    }
+
+    try {
+        const response = await apiCall(`/chat/session/${sessionId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ title: trimmedTitle })
+        });
+        if (!response) return;
+
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            showMessageNotice(data.message || '修改会话名称失败', 'error');
+            return;
+        }
+
+        const titleElement = document.querySelector(`.session-item[data-session-id="${sessionId}"] .session-title`);
+        if (titleElement) {
+            titleElement.textContent = trimmedTitle;
+        }
+
+        showMessageNotice('会话名称已更新', 'success');
+    } catch (error) {
+        console.error('修改会话名称失败:', error);
+        showMessageNotice('修改会话名称失败', 'error');
+    }
+}
+
+async function clearSessionMessages(sessionId) {
+    if (!window.confirm('确定清空这个会话的聊天记录吗？清空后没有历史记录的会话会自动删除。')) {
+        return;
+    }
+
+    try {
+        const response = await apiCall(`/chat/messages?session_id=${encodeURIComponent(sessionId)}`, {
+            method: 'DELETE'
+        });
+        if (!response) return;
+
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            showMessageNotice(data.message || '清空聊天对话失败', 'error');
+            return;
+        }
+
+        if (Number(currentSessionId) === Number(sessionId)) {
+            currentSessionId = null;
+            currentSessionHasMessages = false;
+            renderEmptyChat();
+        }
+        await loadSessions();
+        showMessageNotice(data.message || '聊天对话已清空', 'success');
+    } catch (error) {
+        console.error('清空聊天对话失败:', error);
+        showMessageNotice('清空聊天对话失败', 'error');
+    }
+}
+
+async function deleteSession(sessionId) {
+    if (!window.confirm('确定删除这个会话吗？聊天记录也会一起删除。')) {
+        return;
+    }
+
+    try {
+        const response = await apiCall(`/chat/session/${sessionId}`, { method: 'DELETE' });
+        if (!response) return;
+
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            showMessageNotice(data.message || '删除会话失败', 'error');
+            return;
+        }
+
+        if (Number(currentSessionId) === Number(sessionId)) {
+            currentSessionId = null;
+            currentSessionHasMessages = false;
+            renderEmptyChat();
+        }
+        await loadSessions();
+        showMessageNotice(data.message || '会话已删除', 'success');
+    } catch (error) {
+        console.error('删除会话失败:', error);
+        showMessageNotice('删除会话失败', 'error');
+    }
+}
+
 async function loadSessions() {
     try {
         const response = await apiCall('/chat/sessions');
@@ -324,23 +523,19 @@ async function loadSessions() {
         sessionList.innerHTML = '';
 
         if (data.sessions && data.sessions.length > 0) {
-            data.sessions.forEach((session) => {
-                const sessionItem = document.createElement('div');
-                sessionItem.className = 'session-item';
-                sessionItem.dataset.sessionId = session.session_id;
-                sessionItem.innerHTML = `
-                    <div class="session-title">${session.title || '新会话'}</div>
-                    <div class="session-last-message">${session.last_message || '暂无消息'}</div>
-                `;
-                sessionItem.onclick = () => loadSessionMessages(session.session_id);
-                sessionList.appendChild(sessionItem);
+            const hasCurrentSession = data.sessions.some((session) => Number(session.session_id) === Number(currentSessionId));
+            if (!currentSessionId || !hasCurrentSession) {
+                currentSessionId = data.sessions[0].session_id;
+            }
 
-                if (!currentSessionId) {
-                    currentSessionId = session.session_id;
-                    loadSessionMessages(session.session_id);
-                }
+            data.sessions.forEach((session) => {
+                sessionList.appendChild(createSessionItem(session));
             });
+
+            await loadSessionMessages(currentSessionId);
         } else {
+            currentSessionId = null;
+            currentSessionHasMessages = false;
             sessionList.innerHTML = '<div class="empty-sessions">暂无会话</div>';
             renderEmptyChat();
         }
@@ -351,20 +546,27 @@ async function loadSessions() {
 }
 
 async function createNewSession() {
+    if (isSendingMessage) {
+        showMessageNotice('消息发送中，请稍后再新建会话', 'error');
+        return;
+    }
+
     try {
+        await deleteEmptyCurrentSession();
+
         const response = await apiCall('/chat/session', {
             method: 'POST',
             body: JSON.stringify({ title: '新会话' })
         });
-
         if (!response) return;
 
         const data = await response.json();
         if (data.session_id) {
             currentSessionId = data.session_id;
+            currentSessionHasMessages = false;
             renderEmptyChat();
             clearMessageNotice();
-            loadSessions();
+            renderActiveSessionStub(data.session_id);
         }
     } catch (error) {
         console.error('创建会话失败:', error);
@@ -373,25 +575,40 @@ async function createNewSession() {
 }
 
 async function loadSessionMessages(sessionId) {
-    currentSessionId = sessionId;
+    if (isSendingMessage && Number(currentSessionId) !== Number(sessionId)) {
+        showMessageNotice('消息发送中，请稍后再切换会话', 'error');
+        return;
+    }
+
+    await deleteEmptyCurrentSession(sessionId);
+    currentSessionId = Number(sessionId);
     clearMessageNotice();
 
     document.querySelectorAll('.session-item').forEach((item) => {
         item.classList.remove('active');
-        if (parseInt(item.dataset.sessionId, 10) === sessionId) {
+        if (parseInt(item.dataset.sessionId, 10) === Number(sessionId)) {
             item.classList.add('active');
         }
     });
 
     try {
-        const response = await apiCall(`/chat/messages?session_id=${sessionId}`);
+        const response = await apiCall(`/chat/messages?session_id=${encodeURIComponent(sessionId)}`);
         if (!response) return;
 
         const data = await response.json();
+        if (!response.ok || !data.success) {
+            showMessageNotice(data.message || '加载消息失败', 'error');
+            currentSessionId = null;
+            currentSessionHasMessages = false;
+            await loadSessions();
+            return;
+        }
+
         const messagesContainer = document.getElementById('messages');
         messagesContainer.innerHTML = '';
 
         if (data.messages && data.messages.length > 0) {
+            currentSessionHasMessages = true;
             data.messages.forEach((msg) => {
                 const msgDiv = document.createElement('div');
                 msgDiv.className = `message ${msg.role}`;
@@ -399,6 +616,7 @@ async function loadSessionMessages(sessionId) {
                 messagesContainer.appendChild(msgDiv);
             });
         } else {
+            currentSessionHasMessages = false;
             renderEmptyChat();
         }
 
@@ -479,7 +697,8 @@ async function sendMessage() {
             messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
 
-        loadSessions();
+        currentSessionHasMessages = true;
+        await loadSessions();
     } catch (error) {
         console.error('发送消息失败:', error);
         aiMsgDiv.textContent = '发送消息失败，请稍后再试';

@@ -320,6 +320,57 @@ button:disabled {
     border-color: #3b4351;
 }
 
+.session-row {
+    min-width: 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.session-content {
+    min-width: 0;
+    flex: 1;
+}
+
+.session-actions {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 2px;
+    opacity: 0;
+    transition: opacity 0.16s ease;
+}
+
+.session-item:hover .session-actions,
+.session-item.active .session-actions {
+    opacity: 1;
+}
+
+.session-action {
+    width: 24px;
+    height: 24px;
+    display: grid;
+    place-items: center;
+    border-radius: 6px;
+    background: transparent;
+    color: #9ca3af;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+}
+
+.session-action:hover {
+    background: #303846;
+    color: #f8fafc;
+}
+
+.session-action.warning:hover {
+    color: #fde68a;
+}
+
+.session-action.danger:hover {
+    color: #fecaca;
+}
+
 .session-title {
     font-size: 14px;
     font-weight: 650;
@@ -618,5 +669,9 @@ button:disabled {
 
     .message.user {
         max-width: 88%;
+    }
+
+    .session-actions {
+        opacity: 1;
     }
 }

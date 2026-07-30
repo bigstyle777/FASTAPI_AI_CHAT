@@ -1,7 +1,7 @@
 import base64
 import random
 import uuid
-
+from .cache import get_chat_context,set_chat_context,delete_chat_context,check_rate_limit
 from .llm import chat_with_ai, chat_with_ai_stream
 from .auth import (
     ACCESS_TOKEN_TTL_SECONDS,
@@ -24,13 +24,18 @@ from ..crud import (
     create_message,
     create_session,
     create_user,
+    delete_empty_sessions_by_user,
+    delete_messages_by_session,
+    delete_session,
     get_user_by_id,
     get_messages_by_session,
     get_session_by_user,
     get_sessions_by_user,
     get_user_by_username,
     get_user_settings,
+    rename_session,
     save_user_settings,
+    session_has_messages,
     update_session,
 )
 from ..exceptions import BusinessError
@@ -193,6 +198,53 @@ def create_session_service(db, user, request):
     return {"success": True, "session_id": chat_session.id}
 
 
+def update_session_service(db, user, session_id, request):
+    session = get_session_by_user(db, session_id, user["user_id"])
+    if not session:
+        raise BusinessError("会话不存在或已删除")
+
+    title = (request.title or "").strip()
+    if not title:
+        raise BusinessError("会话名称不能为空")
+
+    renamed_session = rename_session(db, session_id, title)
+    return {
+        "success": True,
+        "session_id": renamed_session.id,
+        "title": renamed_session.title,
+    }
+
+
+def delete_session_service(db, user, session_id):
+    session = get_session_by_user(db, session_id, user["user_id"])
+    if not session:
+        raise BusinessError("会话不存在或已删除")
+
+    delete_session(db, session_id)
+    delete_chat_context(session_id)
+    return {"success": True, "message": "会话已删除"}
+
+
+def delete_messages_service(db, user, session_id):
+    session = get_session_by_user(db, session_id, user["user_id"])
+    if not session:
+        raise BusinessError("会话不存在或已删除")
+
+    deleted_count = delete_messages_by_session(db, session_id)
+    delete_chat_context(session_id)
+
+    session_deleted = not session_has_messages(db, session_id)
+    if session_deleted:
+        delete_session(db, session_id)
+
+    return {
+        "success": True,
+        "deleted_count": deleted_count,
+        "session_deleted": session_deleted,
+        "message": "对话已清空，会话已自动删除" if session_deleted else "对话已清空",
+    }
+
+
 def send_message_service(db, user, request):
     message = request.message.strip()
     if not message:
@@ -216,6 +268,9 @@ def send_message_service(db, user, request):
 
 
 def get_sessions_service(db, user):
+    for session_id in delete_empty_sessions_by_user(db, user["user_id"]):
+        delete_chat_context(session_id)
+
     sessions = get_sessions_by_user(db, user["user_id"])
     result = []
     for session in sessions:
@@ -242,6 +297,13 @@ def get_messages_service(db, user, session_id):
 
 
 def send_message_stream_service(db, user, request):
+    # 限流
+    user_id=user["user_id"]
+    allowed=check_rate_limit(key=f"rate_limit:chat:{user_id}",limit=500,expire_seconds=60*60)
+    if not allowed:
+        yield "请求太频繁,请稍后重试"
+        return 
+    
     try:
         message = request.message.strip()
         if not message:
@@ -256,9 +318,14 @@ def send_message_stream_service(db, user, request):
         create_message(db, request.session_id, "user", message)
         update_session(db, request.session_id, message)
 
-        history = get_messages_by_session(db, request.session_id)
-        messages = [{"role": item.role, "content": item.content} for item in history]
-
+        # 对话缓存
+        messages=get_chat_context(request.session_id)
+        if messages is None:
+            history = get_messages_by_session(db, request.session_id)
+            messages = [{"role": item.role, "content": item.content} for item in history]
+        else:
+            messages.append({"role": "user", "content": message})
+        
         ai_reply = ""
         for chunk in chat_with_ai_stream(messages, user_id=user["user_id"], db=db):
             ai_reply += chunk
@@ -266,6 +333,12 @@ def send_message_stream_service(db, user, request):
 
         create_message(db, request.session_id, "assistant", ai_reply)
         update_session(db, request.session_id, ai_reply)
+
+        messages.append(
+            {"role":"assistant",
+             "content":ai_reply}
+        )
+        set_chat_context(request.session_id,messages[-20:])
     except Exception as error:
         yield f"Error: {str(error)}"
 

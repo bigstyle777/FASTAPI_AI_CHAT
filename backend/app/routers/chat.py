@@ -1,62 +1,95 @@
+from typing import Annotated, Any
+
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
 
 from ..core.database import get_db
 from ..schemas import (
-    CreateChatSessionRequest,
+    ActionResponse,
     ChatRequest,
-    SessionListResponse,
+    CreateChatSessionRequest,
+    DeleteMessagesResponse,
     MessageListResponse,
-    ChatResponse,
+    SessionListResponse,
+    UpdateChatSessionRequest,
 )
-from ..services.analytics import create_session_service
-from ..services.auth import get_current_user
 from ..services.analytics import (
-    send_message_service,
-    get_sessions_service,
+    create_session_service,
+    delete_messages_service,
+    delete_session_service,
     get_messages_service,
+    get_sessions_service,
+    send_message_service,
     send_message_stream_service,
+    update_session_service,
 )
-from ..services.llm import chat_with_ai_stream
+from ..services.auth import get_current_user
 
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
+CurrentUser = Annotated[dict[str, Any], Depends(get_current_user)]
+Database = Annotated[Session, Depends(get_db)]
 
 
 @router.get("/sessions", response_model=SessionListResponse)
-def get_sessions(user=Depends(get_current_user), db=Depends(get_db)):
+def get_sessions(user: CurrentUser, db: Database):
     return get_sessions_service(db, user)
 
 
 @router.post("/session")
 def create_session(
     request: CreateChatSessionRequest,
-    user=Depends(get_current_user),
-    db=Depends(get_db),
+    user: CurrentUser,
+    db: Database,
 ):
     return create_session_service(db, user, request)
+
+
+@router.patch("/session/{session_id}")
+def update_session(
+    session_id: int,
+    request: UpdateChatSessionRequest,
+    user: CurrentUser,
+    db: Database,
+):
+    return update_session_service(db, user, session_id, request)
+
+
+@router.delete("/session/{session_id}", response_model=ActionResponse)
+def delete_session(
+    session_id: int,
+    user: CurrentUser,
+    db: Database,
+):
+    return delete_session_service(db, user, session_id)
 
 
 @router.get("/messages", response_model=MessageListResponse)
 def get_messages(
     session_id: int,
-    user=Depends(get_current_user),
-    db=Depends(get_db),
+    user: CurrentUser,
+    db: Database,
 ):
     return get_messages_service(db, user, session_id)
 
 
-@router.post("/message")
-def send_message(
-    request: ChatRequest, user=Depends(get_current_user), db=Depends(get_db)
+@router.delete("/messages", response_model=DeleteMessagesResponse)
+def delete_messages(
+    session_id: int,
+    user: CurrentUser,
+    db: Database,
 ):
+    return delete_messages_service(db, user, session_id)
+
+
+@router.post("/message")
+def send_message(request: ChatRequest, user: CurrentUser, db: Database):
     return send_message_service(db, user, request)
 
 
 @router.post("/stream")
-def chat_stream(
-    request: ChatRequest, user=Depends(get_current_user), db=Depends(get_db)
-):
+def chat_stream(request: ChatRequest, user: CurrentUser, db: Database):
     return StreamingResponse(
         send_message_stream_service(db, user, request),
         media_type="text/plain",

@@ -22,15 +22,15 @@
 
             <form id="loginForm">
                 <div class="form-group">
-                    <label>用户名</label>
+                    <label for="loginUsername">用户名</label>
                     <input id="loginUsername" type="text" placeholder="请输入用户名" autocomplete="username">
                 </div>
                 <div class="form-group">
-                    <label>密码</label>
+                    <label for="loginPassword">密码</label>
                     <input id="loginPassword" type="password" placeholder="请输入密码" autocomplete="current-password">
                 </div>
                 <div class="form-group">
-                    <label>验证码</label>
+                    <label for="loginCaptchaCode">验证码</label>
                     <div class="captcha-row">
                         <input id="loginCaptchaCode" type="text" placeholder="请输入验证码" autocomplete="off" maxlength="10">
                         <button id="refreshCaptchaBtn" class="captcha-button" type="button" aria-label="刷新验证码">
@@ -43,11 +43,11 @@
 
             <form id="registerForm" style="display: none;">
                 <div class="form-group">
-                    <label>用户名</label>
+                    <label for="registerUsername">用户名</label>
                     <input id="registerUsername" type="text" placeholder="请输入用户名" autocomplete="username">
                 </div>
                 <div class="form-group">
-                    <label>密码</label>
+                    <label for="registerPassword">密码</label>
                     <input id="registerPassword" type="password" placeholder="请输入密码，至少 6 位" autocomplete="new-password">
                 </div>
                 <button id="registerBtn" class="primary-action" type="button">注册</button>
@@ -121,14 +121,14 @@
             <section class="profile-section">
                 <h2>API 设置</h2>
                 <div class="form-group api-key-row">
-                    <label>API Key</label>
+                    <label for="apiKeyInput">API Key</label>
                     <div class="inline-field">
                         <input id="apiKeyInput" type="password" placeholder="请输入你的 API Key">
                         <button id="toggleApiKeyBtn" class="toggle-btn" type="button">显示</button>
                     </div>
                 </div>
                 <div class="form-group">
-                    <label>Provider</label>
+                    <label for="providerSelect">Provider</label>
                     <select id="providerSelect">
                         <option value="deepseek">DeepSeek</option>
                         <option value="openai">OpenAI</option>

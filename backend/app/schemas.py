@@ -26,6 +26,10 @@ class CreateChatSessionRequest(BaseModel):
     title: str = Field(min_length=1, max_length=100, description="聊天会话的标题")
 
 
+class UpdateChatSessionRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=100, description="聊天会话的标题")
+
+
 class ChatRequest(BaseModel):
     session_id: int = Field(description="聊天会话的 ID")
     message: str = Field(
@@ -82,9 +86,21 @@ class MessageListResponse(BaseModel):
     messages: list[MessageResponse]
 
 
+class DeleteMessagesResponse(BaseModel):
+    success: bool
+    deleted_count: int = 0
+    session_deleted: bool = False
+    message: Optional[str] = None
+
+
 class ChatResponse(BaseModel):
     success: bool
     reply: str
+
+
+class ActionResponse(BaseModel):
+    success: bool
+    message: Optional[str] = None
 
 
 class SettingsRequest(BaseModel):

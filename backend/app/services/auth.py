@@ -1,3 +1,5 @@
+from typing import Annotated, Any
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
@@ -20,7 +22,7 @@ TOKEN_KEY_PREFIX = "auth:token:"
 USER_KEY_PREFIX = "user:profile:"
 
 
-def create_token(data: dict):
+def create_token(data: dict[str, Any]):
     return create_access_token(data, ttl_seconds=ACCESS_TOKEN_TTL_SECONDS)
 
 
@@ -35,11 +37,11 @@ def _user_key(user_id: int) -> str:
     return f"{USER_KEY_PREFIX}{user_id}"
 
 
-def cache_user(user_info: dict, ttl: int = USER_CACHE_TTL_SECONDS):
+def cache_user(user_info: dict[str, Any], ttl: int = USER_CACHE_TTL_SECONDS):
     redis_set_json(_user_key(user_info["user_id"]), user_info, ttl=ttl)
 
 
-def get_cached_user(user_id: int) -> dict | None:
+def get_cached_user(user_id: int) -> dict[str, Any] | None:
     return redis_get_json(_user_key(user_id))
 
 
@@ -56,12 +58,12 @@ def revoke_login_session(token: str):
 
 
 def get_current_token(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
 ) -> str:
     return credentials.credentials
 
 
-def get_current_user(token: str = Depends(get_current_token)):
+def get_current_user(token: Annotated[str, Depends(get_current_token)]) -> dict[str, Any]:
     try:
         payload = decode_token(token)
     except JWTError:

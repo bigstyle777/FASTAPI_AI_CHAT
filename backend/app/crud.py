@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from .models import ChatSession, Message, User, UserSetting
 
@@ -42,7 +42,7 @@ def create_message(db, session_id, role, content):
         session_id=session_id,
         role=role,
         content=content,
-        created_at=datetime.now(),
+        created_at=datetime.now(),  # noqa: DTZ005
     )
     db.add(message)
     db.commit()
@@ -57,6 +57,34 @@ def update_session(db, session_id, last_message):
         return None
 
     session.last_message = last_message
+    session.updated_at = datetime.now()
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+def rename_session(db, session_id, title):
+    stmt = select(ChatSession).where(ChatSession.id == session_id)
+    session = db.execute(stmt).scalar_one_or_none()
+    if not session:
+        return None
+
+    session.title = title
+    session.updated_at = datetime.now()
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+def delete_session(db, session_id):
+    stmt = select(ChatSession).where(ChatSession.id == session_id)
+    session = db.execute(stmt).scalar_one_or_none()
+    if not session:
+        return None
+
+    db.execute(delete(Message).where(Message.session_id == session_id))
+    session.is_deleted = True
+    session.last_message = None
     session.updated_at = datetime.now()
     db.commit()
     db.refresh(session)
@@ -84,6 +112,34 @@ def get_session_by_user(db, session_id, user_id):
     return db.execute(stmt).scalar_one_or_none()
 
 
+def session_has_messages(db, session_id):
+    stmt = select(Message.id).where(Message.session_id == session_id).limit(1)
+    return db.execute(stmt).first() is not None
+
+
+def delete_empty_sessions_by_user(db, user_id):
+    stmt = select(ChatSession).where(
+        ChatSession.user_id == user_id,
+        ChatSession.is_deleted.is_(False),
+    )
+    sessions = db.execute(stmt).scalars().all()
+    deleted_ids = []
+    now = datetime.now()
+
+    for session in sessions:
+        if session_has_messages(db, session.id):
+            continue
+        session.is_deleted = True
+        session.last_message = None
+        session.updated_at = now
+        deleted_ids.append(session.id)
+
+    if deleted_ids:
+        db.commit()
+
+    return deleted_ids
+
+
 def get_messages_by_session(db, session_id):
     stmt = (
         select(Message)
@@ -91,6 +147,12 @@ def get_messages_by_session(db, session_id):
         .order_by(Message.id.asc())
     )
     return db.execute(stmt).scalars().all()
+
+
+def delete_messages_by_session(db, session_id):
+    result = db.execute(delete(Message).where(Message.session_id == session_id))
+    db.commit()
+    return result.rowcount or 0
 
 
 def get_user_settings(db, user_id):
