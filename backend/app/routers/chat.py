@@ -14,17 +14,19 @@ from ..schemas import (
     SessionListResponse,
     UpdateChatSessionRequest,
 )
-from ..services.analytics import (
+from ..services.auth import get_current_user
+from ..services.messages import (
+    get_messages_service,
+    send_message_service,
+    send_message_stream_service,
+)
+from ..services.sessions import (
     create_session_service,
     delete_messages_service,
     delete_session_service,
-    get_messages_service,
     get_sessions_service,
-    send_message_service,
-    send_message_stream_service,
     update_session_service,
 )
-from ..services.auth import get_current_user
 
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
