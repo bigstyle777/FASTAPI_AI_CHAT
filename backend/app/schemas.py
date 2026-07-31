@@ -112,3 +112,13 @@ class SettingsResponse(BaseModel):
     success: bool
     api_key: Optional[str] = None
     provider: str = "deepseek"
+
+
+class ChatSessionUpdate(BaseModel):
+    title: str = Field(min_length=1, max_length=100, description="聊天会话的标题")
+
+
+class ChatSessionUpdateResponse(BaseModel):
+    success: bool
+    session_id: int
+    title: str

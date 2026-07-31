@@ -24,6 +24,7 @@ from .sessions import (
     delete_messages_service,
     delete_session_service,
     get_sessions_service,
+    update_session_name_service,
     update_session_service,
 )
 from .settings import get_settings_service, save_settings_service
@@ -54,6 +55,7 @@ __all__ = [
     "delete_messages_service",
     "delete_session_service",
     "get_sessions_service",
+    "update_session_name_service",
     "update_session_service",
     # settings
     "get_settings_service",

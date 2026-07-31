@@ -25,7 +25,6 @@ from ..services.auth import (
 from ..services.captcha import create_captcha_service
 from ..services.settings import get_settings_service, save_settings_service
 
-
 router = APIRouter(prefix="/users", tags=["Users"])
 CurrentUser = Annotated[dict[str, Any], Depends(get_current_user)]
 CurrentToken = Annotated[str, Depends(get_current_token)]

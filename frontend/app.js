@@ -1,9 +1,48 @@
 const API_BASE_URL = "http://127.0.0.1:8000";
+const THEME_STORAGE_KEY = 'aichatpro-theme';
+const VALID_THEMES = ['light', 'dark', 'system'];
+let systemThemeMedia = window.matchMedia('(prefers-color-scheme: dark)');
 
 let currentSessionId = null;
 let isSendingMessage = false;
 let currentCaptchaId = null;
 let currentSessionHasMessages = false;
+
+function getStoredTheme() {
+    const stored = localStorage.getItem(THEME_STORAGE_KEY);
+    return VALID_THEMES.includes(stored) ? stored : 'system';
+}
+
+function resolveTheme(theme) {
+    if (theme === 'system') {
+        return systemThemeMedia.matches ? 'dark' : 'light';
+    }
+    return theme;
+}
+
+function applyTheme(theme) {
+    const resolved = resolveTheme(theme);
+    document.documentElement.setAttribute('data-theme', resolved);
+    document.querySelectorAll('.theme-btn').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.theme === theme);
+    });
+}
+
+function setTheme(theme) {
+    const next = VALID_THEMES.includes(theme) ? theme : 'system';
+    localStorage.setItem(THEME_STORAGE_KEY, next);
+    applyTheme(next);
+}
+
+function initTheme() {
+    const theme = getStoredTheme();
+    applyTheme(theme);
+    systemThemeMedia.addEventListener('change', () => {
+        if (getStoredTheme() === 'system') {
+            applyTheme('system');
+        }
+    });
+}
 
 function getToken() {
     return localStorage.getItem('token');
@@ -311,18 +350,61 @@ async function handleLogout() {
     clearAuthState();
 }
 
-function createSessionActionButton(label, title, onClick, extraClass = '') {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = `session-action ${extraClass}`.trim();
-    button.textContent = label;
-    button.title = title;
-    button.setAttribute('aria-label', title);
-    button.addEventListener('click', (event) => {
+let activeSessionMenu = null;
+
+function closeSessionMenu() {
+    if (activeSessionMenu) {
+        activeSessionMenu.remove();
+        activeSessionMenu = null;
+    }
+    document.removeEventListener('click', onDocumentClickCloseMenu);
+}
+
+function onDocumentClickCloseMenu(event) {
+    if (activeSessionMenu && !activeSessionMenu.contains(event.target) && !event.target.classList.contains('session-menu-trigger')) {
+        closeSessionMenu();
+    }
+}
+
+function openSessionMenu(triggerBtn, sessionId, titleText) {
+    closeSessionMenu();
+
+    const menu = document.createElement('div');
+    menu.className = 'session-menu';
+
+    const renameItem = document.createElement('button');
+    renameItem.type = 'button';
+    renameItem.className = 'session-menu-item';
+    renameItem.textContent = '重命名会话';
+    renameItem.addEventListener('click', (event) => {
         event.stopPropagation();
-        onClick();
+        closeSessionMenu();
+        openRenameSessionModal(sessionId, titleText);
     });
-    return button;
+
+    const deleteItem = document.createElement('button');
+    deleteItem.type = 'button';
+    deleteItem.className = 'session-menu-item danger';
+    deleteItem.textContent = '删除会话';
+    deleteItem.addEventListener('click', (event) => {
+        event.stopPropagation();
+        closeSessionMenu();
+        deleteSession(sessionId);
+    });
+
+    menu.appendChild(renameItem);
+    menu.appendChild(deleteItem);
+
+    document.body.appendChild(menu);
+    const rect = triggerBtn.getBoundingClientRect();
+    menu.style.top = `${rect.bottom + 4}px`;
+    menu.style.left = `${rect.right - menu.offsetWidth}px`;
+    if (menu.offsetLeft < 8) {
+        menu.style.left = '8px';
+    }
+
+    activeSessionMenu = menu;
+    document.addEventListener('click', onDocumentClickCloseMenu);
 }
 
 function createSessionItem(session) {
@@ -350,16 +432,21 @@ function createSessionItem(session) {
     lastMessageElement.className = 'session-last-message';
     lastMessageElement.textContent = lastMessage;
 
-    const actions = document.createElement('div');
-    actions.className = 'session-actions';
-    actions.appendChild(createSessionActionButton('✎', '修改会话名称', () => renameSession(sessionId, titleElement.textContent)));
-    actions.appendChild(createSessionActionButton('⌫', '清空聊天对话', () => clearSessionMessages(sessionId), 'warning'));
-    actions.appendChild(createSessionActionButton('×', '删除会话', () => deleteSession(sessionId), 'danger'));
+    const menuTrigger = document.createElement('button');
+    menuTrigger.type = 'button';
+    menuTrigger.className = 'session-menu-trigger';
+    menuTrigger.setAttribute('aria-label', '会话操作');
+    menuTrigger.innerHTML = '&#8942;';
+    menuTrigger.title = '更多操作';
+    menuTrigger.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openSessionMenu(menuTrigger, sessionId, titleElement.textContent);
+    });
 
     content.appendChild(titleElement);
     content.appendChild(lastMessageElement);
     row.appendChild(content);
-    row.appendChild(actions);
+    row.appendChild(menuTrigger);
     sessionItem.appendChild(row);
     sessionItem.onclick = () => loadSessionMessages(sessionId);
     return sessionItem;
@@ -420,68 +507,122 @@ async function deleteEmptyCurrentSession(nextSessionId = null) {
     return true;
 }
 
-async function renameSession(sessionId, currentTitle) {
-    const title = window.prompt('修改会话名称', currentTitle || '新会话');
-    if (title === null) return;
+function openRenameSessionModal(sessionId, currentTitle) {
+    closeRenameSessionModal();
 
-    const trimmedTitle = title.trim();
-    if (!trimmedTitle) {
-        showMessageNotice('会话名称不能为空', 'error');
-        return;
-    }
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'renameSessionModal';
 
-    try {
-        const response = await apiCall(`/chat/session/${sessionId}`, {
-            method: 'PATCH',
-            body: JSON.stringify({ title: trimmedTitle })
-        });
-        if (!response) return;
+    const modal = document.createElement('div');
+    modal.className = 'modal-card';
 
-        const data = await response.json();
-        if (!response.ok || !data.success) {
-            showMessageNotice(data.message || '修改会话名称失败', 'error');
+    const heading = document.createElement('h3');
+    heading.textContent = '重命名会话';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'modal-input';
+    input.value = currentTitle || '新会话';
+    input.maxLength = 100;
+    input.placeholder = '请输入会话名称';
+
+    const actions = document.createElement('div');
+    actions.className = 'modal-actions';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'modal-btn ghost';
+    cancelBtn.textContent = '取消';
+
+    const saveBtn = document.createElement('button');
+    saveBtn.type = 'button';
+    saveBtn.className = 'modal-btn primary';
+    saveBtn.textContent = '保存';
+
+    actions.appendChild(cancelBtn);
+    actions.appendChild(saveBtn);
+    modal.appendChild(heading);
+    modal.appendChild(input);
+    modal.appendChild(actions);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    input.focus();
+    input.select();
+
+    const close = () => closeRenameSessionModal();
+    cancelBtn.addEventListener('click', close);
+    overlay.addEventListener('click', (event) => {
+        if (event.target === overlay) close();
+    });
+    input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            saveBtn.click();
+        } else if (event.key === 'Escape') {
+            event.preventDefault();
+            close();
+        }
+    });
+
+    saveBtn.addEventListener('click', async () => {
+        const newTitle = input.value.trim();
+        if (!newTitle) {
+            showMessageNotice('会话名称不能为空', 'error');
+            input.focus();
+            return;
+        }
+        if (newTitle === currentTitle) {
+            closeRenameSessionModal();
             return;
         }
 
-        const titleElement = document.querySelector(`.session-item[data-session-id="${sessionId}"] .session-title`);
-        if (titleElement) {
-            titleElement.textContent = trimmedTitle;
-        }
+        saveBtn.disabled = true;
+        cancelBtn.disabled = true;
+        saveBtn.textContent = '保存中...';
 
-        showMessageNotice('会话名称已更新', 'success');
-    } catch (error) {
-        console.error('修改会话名称失败:', error);
-        showMessageNotice('修改会话名称失败', 'error');
-    }
+        try {
+            const response = await apiCall(`/chat/sessions/${sessionId}`, {
+                method: 'POST',
+                body: JSON.stringify({ title: newTitle })
+            });
+            if (!response) {
+                saveBtn.disabled = false;
+                cancelBtn.disabled = false;
+                saveBtn.textContent = '保存';
+                return;
+            }
+
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                showMessageNotice(data.message || '修改会话名称失败', 'error');
+                saveBtn.disabled = false;
+                cancelBtn.disabled = false;
+                saveBtn.textContent = '保存';
+                return;
+            }
+
+            const titleElement = document.querySelector(`.session-item[data-session-id="${sessionId}"] .session-title`);
+            if (titleElement) {
+                titleElement.textContent = newTitle;
+            }
+            closeRenameSessionModal();
+            showMessageNotice('会话名称已更新', 'success');
+        } catch (error) {
+            console.error('修改会话名称失败:', error);
+            showMessageNotice('修改会话名称失败', 'error');
+            saveBtn.disabled = false;
+            cancelBtn.disabled = false;
+            saveBtn.textContent = '保存';
+        }
+    });
 }
 
-async function clearSessionMessages(sessionId) {
-    if (!window.confirm('确定清空这个会话的聊天记录吗？清空后没有历史记录的会话会自动删除。')) {
-        return;
-    }
-
-    try {
-        const response = await apiCall(`/chat/messages?session_id=${encodeURIComponent(sessionId)}`, {
-            method: 'DELETE'
-        });
-        if (!response) return;
-
-        const data = await response.json();
-        if (!response.ok || !data.success) {
-            showMessageNotice(data.message || '清空聊天对话失败', 'error');
-            return;
-        }
-
-        if (Number(currentSessionId) === Number(sessionId)) {
-            currentSessionId = null;
-            currentSessionHasMessages = false;
-            renderEmptyChat();
-        }
-        await loadSessions();
-        showMessageNotice(data.message || '聊天对话已清空', 'success');
-    } catch (error) {
-        console.error('清空聊天对话失败:', error);
-        showMessageNotice('清空聊天对话失败', 'error');
+function closeRenameSessionModal() {
+    const modal = document.getElementById('renameSessionModal');
+    if (modal) {
+        modal.remove();
     }
 }
 
@@ -709,6 +850,7 @@ async function sendMessage() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    initTheme();
     if (isLoggedIn()) {
         showMainPage();
     } else {
@@ -739,6 +881,10 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('profileBtn').addEventListener('click', showProfilePage);
     document.getElementById('backBtn').addEventListener('click', showMainPage);
     document.getElementById('toggleApiKeyBtn').addEventListener('click', toggleApiKeyVisibility);
+
+    document.querySelectorAll('.theme-btn').forEach((btn) => {
+        btn.addEventListener('click', () => setTheme(btn.dataset.theme));
+    });
 
     document.getElementById('messageInput').addEventListener('keypress', (event) => {
         if (event.key === 'Enter' && !event.shiftKey) {

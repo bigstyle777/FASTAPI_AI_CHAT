@@ -1,3 +1,4 @@
+from sqlalchemy.orm import Session
 from .cache import delete_chat_context
 from ..crud import (
     create_session,
@@ -9,6 +10,7 @@ from ..crud import (
     get_sessions_by_user,
     rename_session,
     session_has_messages,
+    update_session_name,
 )
 from ..exceptions import BusinessError
 
@@ -41,6 +43,26 @@ def update_session_service(db, user, session_id, request):
         "success": True,
         "session_id": renamed_session.id,
         "title": renamed_session.title,
+    }
+
+
+def update_session_name_service(db: Session, user, session_id, new_name: str):
+    session = get_session_by_user(db, session_id, user_id=user["user_id"])
+    if not session:
+        raise BusinessError("会话不存在或已删除")
+
+    title = (new_name or "").strip()
+    if not title:
+        raise BusinessError("会话名称不能为空")
+
+    chat_session = update_session_name(db, session.id, title)
+    if not chat_session:
+        raise BusinessError("会话不存在或已删除")
+
+    return {
+        "success": True,
+        "session_id": chat_session.id,
+        "title": chat_session.title,
     }
 
 

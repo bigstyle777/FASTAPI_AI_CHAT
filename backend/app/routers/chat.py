@@ -8,6 +8,8 @@ from ..core.database import get_db
 from ..schemas import (
     ActionResponse,
     ChatRequest,
+    ChatSessionUpdate,
+    ChatSessionUpdateResponse,
     CreateChatSessionRequest,
     DeleteMessagesResponse,
     MessageListResponse,
@@ -25,9 +27,9 @@ from ..services.sessions import (
     delete_messages_service,
     delete_session_service,
     get_sessions_service,
+    update_session_name_service,
     update_session_service,
 )
-
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 CurrentUser = Annotated[dict[str, Any], Depends(get_current_user)]
@@ -48,16 +50,6 @@ def create_session(
     return create_session_service(db, user, request)
 
 
-@router.patch("/session/{session_id}")
-def update_session(
-    session_id: int,
-    request: UpdateChatSessionRequest,
-    user: CurrentUser,
-    db: Database,
-):
-    return update_session_service(db, user, session_id, request)
-
-
 @router.delete("/session/{session_id}", response_model=ActionResponse)
 def delete_session(
     session_id: int,
@@ -65,6 +57,13 @@ def delete_session(
     db: Database,
 ):
     return delete_session_service(db, user, session_id)
+
+
+@router.post("/sessions/{session_id}", response_model=ChatSessionUpdateResponse)
+def update_session_name(
+    session_id: int, request: ChatSessionUpdate, user: CurrentUser, db: Database
+):
+    return update_session_name_service(db, user, session_id, request.title)
 
 
 @router.get("/messages", response_model=MessageListResponse)

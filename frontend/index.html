@@ -71,6 +71,11 @@
             <div id="sessionList" aria-label="会话列表"></div>
 
             <div class="sidebar-footer">
+                <div class="theme-switcher" role="group" aria-label="主题切换">
+                    <button id="themeLightBtn" class="theme-btn" type="button" data-theme="light">浅色</button>
+                    <button id="themeDarkBtn" class="theme-btn" type="button" data-theme="dark">深色</button>
+                    <button id="themeSystemBtn" class="theme-btn" type="button" data-theme="system">系统</button>
+                </div>
                 <button id="profileBtn" class="ghost-btn" type="button">个人中心</button>
                 <button id="logoutBtn" class="ghost-btn danger" type="button">退出登录</button>
             </div>
@@ -139,6 +144,19 @@
         </div>
     </div>
 
+    <script>
+        (function () {
+            try {
+                var stored = localStorage.getItem('aichatpro-theme');
+                var valid = ['light', 'dark', 'system'];
+                var theme = valid.indexOf(stored) >= 0 ? stored : 'system';
+                var resolved = theme === 'system'
+                    ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+                    : theme;
+                document.documentElement.setAttribute('data-theme', resolved);
+            } catch (e) { }
+        })();
+    </script>
     <script src="app.js"></script>
 </body>
 

@@ -1,6 +1,7 @@
+from sqlalchemy.orm import Session
 from datetime import datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 
 from .models import ChatSession, Message, User, UserSetting
 
@@ -153,6 +154,19 @@ def delete_messages_by_session(db, session_id):
     result = db.execute(delete(Message).where(Message.session_id == session_id))
     db.commit()
     return result.rowcount or 0
+
+
+def update_session_name(
+    db: Session, session_id: int, new_name: str
+) -> ChatSession | None:
+    chat_session = db.get(ChatSession, session_id)
+    if not chat_session:
+        return None
+    chat_session.title = new_name
+    chat_session.updated_at = datetime.now()
+    db.commit()
+    db.refresh(chat_session)
+    return chat_session
 
 
 def get_user_settings(db, user_id):
