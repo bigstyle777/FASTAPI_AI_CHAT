@@ -1,14 +1,11 @@
-from fastapi import FastAPI
-from fastapi import Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-from .routers import users
-from .routers import chat
-from .exceptions import BusinessError
 from .core.database import init_db
 from .core.redis import RedisUnavailableError
-
+from .exceptions import BusinessError
+from .routers import chat, users
 
 app = FastAPI()
 
@@ -28,12 +25,9 @@ app.add_middleware(
 
 init_db()
 
-app.include_router(
-    users.router
-)
-app.include_router(
-    chat.router
-)
+app.include_router(users.router)
+app.include_router(chat.router)
+
 
 @app.middleware("http")
 async def log_request(request, call_next):
@@ -42,6 +36,7 @@ async def log_request(request, call_next):
     response = await call_next(request)
 
     return response
+
 
 @app.exception_handler(BusinessError)
 async def business_error_handler(request: Request, exc: BusinessError):

@@ -90,7 +90,11 @@ def send_message(request: ChatRequest, user: CurrentUser, db: Database):
 
 
 @router.post("/stream")
-def chat_stream(request: ChatRequest, user: CurrentUser, db: Database):
+def chat_stream(
+    request: ChatRequest,
+    user: CurrentUser,
+    db: Database,
+):
     return StreamingResponse(
         send_message_stream_service(db, user, request),
         media_type="text/plain",

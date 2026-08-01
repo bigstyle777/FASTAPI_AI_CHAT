@@ -1,0 +1,40 @@
+{
+  "data": [
+    {
+      "id": "page-index",
+      "title": "用户管理",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1785501380000,
+      "canvasData": {
+        "x": 0,
+        "y": 0,
+        "group": 0,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 901,
+          "viewportWidth": 1440,
+          "sourceHash": "fnv1a-e391ffaa",
+          "measuredAt": 1785502611651
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/index.html",
+        "interactions": []
+      }
+    }
+  ],
+  "config": {
+    "autoLayout": true,
+    "deviceType": "desktop",
+    "projectName": "FastAPI 全栈模板管理后台",
+    "designLibrary": {
+      "name": "TRAE",
+      "id": "dl_builtin_trae",
+      "version": "",
+      "scope": "built-in-global",
+      "path": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae",
+      "versionSource": "selected-context"
+    }
+  }
+}

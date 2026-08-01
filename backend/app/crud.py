@@ -1,7 +1,7 @@
-from sqlalchemy.orm import Session
 from datetime import datetime
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select
+from sqlalchemy.orm import Session
 
 from .models import ChatSession, Message, User, UserSetting
 
@@ -90,6 +90,11 @@ def delete_session(db, session_id):
     db.commit()
     db.refresh(session)
     return session
+
+
+def get_session_by_id(db, session_id):
+    stmt = select(ChatSession).where(ChatSession.id == session_id)
+    return db.execute(stmt).scalar_one_or_none()
 
 
 def get_sessions_by_user(db, user_id):

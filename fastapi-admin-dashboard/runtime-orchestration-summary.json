@@ -1,0 +1,651 @@
+{
+  "schemaVersion": "2026.07.11.0",
+  "skillProvenance": {
+    "name": "solo-design",
+    "version": "2026.07.22.00.00.00",
+    "version_source": "skill-release-manifest.json",
+    "read_status": "ok"
+  },
+  "project": {
+    "resolvedLane": "library_bound",
+    "intentProfile": {
+      "caseFamily": "library_bound",
+      "sourceType": null,
+      "operatingMode": "library-bound"
+    },
+    "selectedIntentWorkflowRead": true,
+    "contextRequirementsLoaded": [
+      {
+        "path": "shared-runtime/runtime-boundaries/lane-runtime-contracts.md",
+        "readStatus": "loaded",
+        "bodyRead": true
+      },
+      {
+        "path": "shared-runtime/agent-dispatch-runtime/lane-dispatch-index.md",
+        "readStatus": "loaded",
+        "bodyRead": true
+      },
+      {
+        "path": "delivery-quality/page-rendering-quality-gate.md",
+        "readStatus": "loaded",
+        "bodyRead": true
+      },
+      {
+        "path": "delivery-quality/design-artifact-validation.md",
+        "readStatus": "loaded",
+        "bodyRead": true
+      },
+      {
+        "path": "delivery-quality/delivery-evidence-contract.md",
+        "readStatus": "loaded",
+        "bodyRead": true
+      },
+      {
+        "path": "visual-experience/visual-experience-guidelines.md",
+        "readStatus": "loaded",
+        "bodyRead": true
+      }
+    ],
+    "contextReadScope": "library-bound-strict",
+    "validationRunDiscipline": {
+      "maxFullValidationRuns": 2,
+      "softWarningsTriggerRepair": false,
+      "blockingRepairMode": "targeted-once",
+      "forbiddenRepairTriggers": [
+        "soft-warning-only",
+        "provenance-warning-only",
+        "style-warning-only"
+      ]
+    },
+    "lowValueCallWatchdog": {
+      "noProgressNextAction": "proceed-to-dispatch"
+    },
+    "dashboardMode": true,
+    "deviceType": "desktop",
+    "dispatchPreflightManifest": [
+      {
+        "nodeId": "page-index",
+        "htmlSrc": "pages/index.html",
+        "laneContract": {
+          "resolvedLane": "library_bound",
+          "packetType": "LibraryBoundPagePacket",
+          "pageRuntimeGuide": "intent-workflows/intent-page-library-bound/library-bound-page-runtime.md",
+          "dispatchContract": "intent-workflows/intent-page-library-bound/dispatch-contract.md"
+        },
+        "sharedTemplate": null,
+        "supplementaryReads": [],
+        "allowedWritePaths": [
+          "pages/index.html"
+        ],
+        "forbiddenWriteRoots": [
+          "*.design",
+          "runtime-orchestration-summary.json",
+          "validation-report.json",
+          "finish-readiness-report.json"
+        ],
+        "toolPolicy": {
+          "todoWriteAllowed": false,
+          "validationScriptsAllowed": false,
+          "previewAllowed": false,
+          "helperScriptsAllowed": false,
+          "designFileWriteAllowed": false,
+          "allowedWritePaths": [
+            "pages/index.html"
+          ]
+        }
+      }
+    ],
+    "expectedDispatches": [
+      {
+        "nodeId": "page-index",
+        "pageId": "page-index",
+        "targetPageId": "page-index",
+        "htmlSrc": "pages/index.html",
+        "status": "completed",
+        "changedFiles": [
+          "pages/index.html"
+        ],
+        "toolCallLedger": {
+          "source": "main-agent-runtime-trace",
+          "traceDigest": "7413884fa9a4333d6db3554aa60df8517aad338ec89f5e433ba1efa38bb1451a",
+          "todoWriteCalls": 0,
+          "previewCalls": 0,
+          "validationScriptCalls": 0,
+          "helperScriptWrites": 0
+        },
+        "recordedAt": "2026-07-31T12:56:27.011Z",
+        "source": "record-dispatch-completion.mjs"
+      }
+    ],
+    "validationHistory": [
+      {
+        "reportPath": "validation-report.json",
+        "reportHash": "dc077c6ebed4910ac4ecf076728b5bf1890a0c36e9539637003b29056bda0bad",
+        "checkedAt": "2026-07-31T12:51:03.121Z",
+        "success": false,
+        "exitCode": 1,
+        "renderBlockingErrorCount": 8,
+        "repairPlanHints": [],
+        "errorSignatures": [
+          {
+            "errorClass": "app-shell-viewport",
+            "normalized": "[app-shell-viewport] pages/index.html: viewportMode is app-shell but data-viewport-mode=\"app-shell\" is missing on the shell container.",
+            "signature": "e5cb705f62709e2b75ee564f8100e07971efb44938b123b9755bd3091bf43faf"
+          },
+          {
+            "errorClass": "app-shell-viewport",
+            "normalized": "[app-shell-viewport] pages/index.html: app-shell pages must declare data-scroll-region=\"primary\" on a class list containing overflow-y-auto.",
+            "signature": "8e23327dd9f37898b16fc24ca2492bf3af871da2b0addb128d91473d91bdfab3"
+          },
+          {
+            "errorClass": "dispatch-changed-files",
+            "normalized": "[dispatch-changed-files] pages/index.html: toolCallLedger.source must be main-agent-runtime-trace; found (missing)",
+            "signature": "fc6dc878ce3863b26478549cc3a255dc1dd21bfef4faf663342c4cc904702c3b"
+          },
+          {
+            "errorClass": "dispatch-changed-files",
+            "normalized": "[dispatch-changed-files] pages/index.html: toolCallLedger.traceDigest is required for trace-sourced discipline audit",
+            "signature": "a24cc56481b4b1b9c3330e3fbb10d8932f94746b40568d40d31968799dbaa756"
+          },
+          {
+            "errorClass": "html-quality",
+            "normalized": "[html-quality] index.html: image references missing asset file: ../assets/icons/zap.0c0c0d.svg",
+            "signature": "46fd2778c691da78c4516cd8dc1858ad629cf62711c5d0dda10d4ac93c7465cb"
+          },
+          {
+            "errorClass": "html-quality",
+            "normalized": "[html-quality] index.html: image references missing asset file: ../assets/icons/chevron-down.svg",
+            "signature": "609bdf1651775992f4ea2361c27a0d5c817b64415658209e13f55964e7b22cdd"
+          },
+          {
+            "errorClass": "html-quality",
+            "normalized": "[html-quality] index.html: image references missing asset file: ../assets/icons/check... */ /* ===== Input / Search ===== */ .ds-input { display: flex; align-items: center; gap: var(--spacer-8); padding: 0 var(--spacer-12); height: 28px; background: var(--bg-overlay-l1); border: 1px solid var(--border-neutral-l1); border-radius: var(--radius-4); color: var(--text-default); width: 100%; font-size: var(--body-sm-font-size); line-height: 1; } .ds-input:focus-within { border-color: var(--border-brand); background: var(--bg-overlay-l2); } .ds-input input { flex: 1; background: transparent; border: none; outline: none; color: var(--text-default); font: inherit; } .ds-input input::placeholder { color: var(--text-tertiary); } .ds-input__icon { color: var(--icon-secondary); display: inline-flex; } .ds-search { position: relative; } /* ===== Select ===== * Dropdown indicator is a linear chevron (Lucide-style SVG, 2px stroke) — never a * filled triangle / caret. The svg is inlined as a data-uri using currentColor * stand-in so it inherits via the --icon-tertiary fallback. */ .ds-select { width: 100%; height: 28px; padding: 0 var(--spacer-32) 0 var(--spacer-12); background: var(--bg-overlay-l1); background-image: url(",
+            "signature": "709d5cd78d039dedd2468bb1b1982acd4e2938f2abeab54481c9c7268100fa4c"
+          },
+          {
+            "errorClass": "html-quality",
+            "normalized": "[html-quality] index.html: image references missing asset file: ../assets/icons/chevron-right.svg",
+            "signature": "cb20973610553a858be0b4a7ce3d7967425b2e4b51d21ec0f56bfdeba87b7dc7"
+          }
+        ],
+        "terminalState": null
+      }
+    ],
+    "validationRepairLedger": [
+      {
+        "failedReportPath": "validation-report.json",
+        "failedReportHash": "dc077c6ebed4910ac4ecf076728b5bf1890a0c36e9539637003b29056bda0bad",
+        "repairWorkflowReadPath": "intent-workflows/intent-project-mutation/main-agent-repair-workflow.md",
+        "repairStartedAt": "2026-07-31T12:51:21.817Z",
+        "repairEntryStatus": "started-awaiting-owner-batch-repair",
+        "ownerTriage": [
+          {
+            "owner": "main-agent",
+            "errorClass": "unknown-blocking",
+            "affectedFiles": [],
+            "repairScope": "read validation report, classify owner, then use the narrowest targeted repair",
+            "strategy": "no validator source read; targeted affected-file excerpt only"
+          },
+          {
+            "owner": "main-agent",
+            "errorClass": "unknown-blocking",
+            "affectedFiles": [],
+            "repairScope": "read validation report, classify owner, then use the narrowest targeted repair",
+            "strategy": "no validator source read; targeted affected-file excerpt only"
+          },
+          {
+            "owner": "main-agent",
+            "errorClass": "unknown-blocking",
+            "affectedFiles": [],
+            "repairScope": "read validation report, classify owner, then use the narrowest targeted repair",
+            "strategy": "no validator source read; targeted affected-file excerpt only"
+          },
+          {
+            "owner": "main-agent",
+            "errorClass": "unknown-blocking",
+            "affectedFiles": [],
+            "repairScope": "read validation report, classify owner, then use the narrowest targeted repair",
+            "strategy": "no validator source read; targeted affected-file excerpt only"
+          },
+          {
+            "owner": "main-agent",
+            "errorClass": "unknown-blocking",
+            "affectedFiles": [],
+            "repairScope": "read validation report, classify owner, then use the narrowest targeted repair",
+            "strategy": "no validator source read; targeted affected-file excerpt only"
+          },
+          {
+            "owner": "main-agent",
+            "errorClass": "unknown-blocking",
+            "affectedFiles": [],
+            "repairScope": "read validation report, classify owner, then use the narrowest targeted repair",
+            "strategy": "no validator source read; targeted affected-file excerpt only"
+          },
+          {
+            "owner": "main-agent",
+            "errorClass": "unknown-blocking",
+            "affectedFiles": [],
+            "repairScope": "read validation report, classify owner, then use the narrowest targeted repair",
+            "strategy": "no validator source read; targeted affected-file excerpt only"
+          },
+          {
+            "owner": "main-agent",
+            "errorClass": "unknown-blocking",
+            "affectedFiles": [],
+            "repairScope": "read validation report, classify owner, then use the narrowest targeted repair",
+            "strategy": "no validator source read; targeted affected-file excerpt only"
+          }
+        ],
+        "repairPlanHints": [],
+        "repairActions": [],
+        "revalidationReportPath": null,
+        "revalidationReportHash": null,
+        "revalidationSuccess": null,
+        "blockedReason": null
+      }
+    ],
+    "validationSnapshot": {},
+    "repairEntryEvidence": [
+      {
+        "failedReportPath": "validation-report.json",
+        "failedReportHash": "dc077c6ebed4910ac4ecf076728b5bf1890a0c36e9539637003b29056bda0bad",
+        "repairWorkflowReadPath": "intent-workflows/intent-project-mutation/main-agent-repair-workflow.md",
+        "repairStartedAt": "2026-07-31T12:51:21.817Z",
+        "ledgerIndex": 0,
+        "ownerTriageCount": 8,
+        "repairActionCount": 0,
+        "revalidationReportPath": null,
+        "revalidationReportHash": null,
+        "revalidationSuccess": null
+      }
+    ],
+    "mainAgentPostDispatchMutations": []
+  },
+  "designSource": {
+    "operatingMode": "library-bound",
+    "libraryIdentity": {
+      "name": "TRAE",
+      "id": "dl_builtin_trae",
+      "version": "",
+      "scope": "built-in-global",
+      "path": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae",
+      "versionSource": "selected-context"
+    },
+    "brandPrefix": "",
+    "cssPath": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\colors_and_type.css",
+    "tokenCssPath": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\colors_and_type.css",
+    "componentsCssPath": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\components.css",
+    "actualTokenNameReference": [
+      "--bg-base-default",
+      "--bg-base-secondary",
+      "--bg-base-tertiary",
+      "--bg-overlay-l1",
+      "--bg-overlay-l2",
+      "--bg-menu",
+      "--bg-brand",
+      "--bg-brand-hover",
+      "--bg-brand-popup",
+      "--text-default",
+      "--text-default-hover",
+      "--text-secondary",
+      "--text-tertiary",
+      "--text-onbrand",
+      "--text-brand",
+      "--icon-default",
+      "--icon-secondary",
+      "--icon-tertiary",
+      "--icon-onbrand",
+      "--border-neutral-l1",
+      "--border-neutral-l2",
+      "--border-neutral-l3",
+      "--border-brand",
+      "--border-contrast",
+      "--status-success-default",
+      "--status-error-default",
+      "--status-warning-default",
+      "--status-success-surface-l1",
+      "--status-error-surface-l1",
+      "--status-warning-surface-l1",
+      "--body-sm-font-size",
+      "--body-sm-line-height",
+      "--body-sm-strong-font-weight",
+      "--body-xs-font-size",
+      "--body-base-font-size",
+      "--heading-lg-font-size",
+      "--heading-md-font-size",
+      "--font-weight-medium",
+      "--font-weight-strong",
+      "--radius-4",
+      "--radius-6",
+      "--radius-8",
+      "--radius-10",
+      "--radius-full",
+      "--spacer-4",
+      "--spacer-6",
+      "--spacer-8",
+      "--spacer-12",
+      "--spacer-16",
+      "--spacer-24",
+      "--spacer-32",
+      "--spacer-40"
+    ],
+    "designDecisionSummary": "Dark-first IDE/dashboard design system with green brand accent (#32F08C), SF Pro typography, JetBrains Mono code, tight radius scale 2-10px, 8pt spacer scale. Use bg-base-default as canvas, bg-base-secondary for cards/panels, bg-overlay-l1/l2 for hover surfaces, text-default/secondary/tertiary hierarchy, brand green for primary CTA and active nav. Status colors scoped to tags/cells only.",
+    "componentIndexSummary": [
+      {
+        "slug": "nav-list",
+        "name": "Nav List",
+        "preview": "preview/component-nav-list.html"
+      },
+      {
+        "slug": "buttons",
+        "name": "Button",
+        "preview": "preview/component-buttons.html"
+      },
+      {
+        "slug": "table",
+        "name": "Table",
+        "preview": "preview/component-table.html"
+      },
+      {
+        "slug": "tag",
+        "name": "Tag",
+        "preview": "preview/component-tag.html"
+      },
+      {
+        "slug": "page-header",
+        "name": "Page Header",
+        "preview": "preview/component-page-header.html"
+      },
+      {
+        "slug": "avatar",
+        "name": "Avatar",
+        "preview": "preview/component-avatar.html"
+      },
+      {
+        "slug": "forms",
+        "name": "Form Controls",
+        "preview": "preview/component-forms.html"
+      },
+      {
+        "slug": "atoms",
+        "name": "Shared Atoms",
+        "preview": "preview/component-atoms.html"
+      }
+    ],
+    "componentPlan": [
+      {
+        "slug": "nav-list",
+        "contractKind": "preview",
+        "previewFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\preview\\component-nav-list.html",
+        "contractFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\components\\nav-list.json"
+      },
+      {
+        "slug": "buttons",
+        "contractKind": "preview",
+        "previewFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\preview\\component-buttons.html",
+        "contractFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\components\\buttons.json"
+      },
+      {
+        "slug": "table",
+        "contractKind": "preview",
+        "previewFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\preview\\component-table.html",
+        "contractFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\components\\table.json"
+      },
+      {
+        "slug": "tag",
+        "contractKind": "preview",
+        "previewFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\preview\\component-tag.html",
+        "contractFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\components\\tag.json"
+      },
+      {
+        "slug": "page-header",
+        "contractKind": "preview",
+        "previewFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\preview\\component-page-header.html",
+        "contractFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\components\\page-header.json"
+      },
+      {
+        "slug": "avatar",
+        "contractKind": "preview",
+        "previewFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\preview\\component-avatar.html",
+        "contractFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\components\\avatar.json"
+      },
+      {
+        "slug": "forms",
+        "contractKind": "preview",
+        "previewFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\preview\\component-forms.html",
+        "contractFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\components\\forms.json"
+      },
+      {
+        "slug": "atoms",
+        "contractKind": "preview",
+        "previewFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\preview\\component-atoms.html",
+        "contractFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\components\\atoms.json"
+      }
+    ],
+    "tokenFidelity": "strict",
+    "uiKitPath": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\ui_kits\\dashboard\\index.html",
+    "forbiddenInventedComponents": [],
+    "allowedComponents": [
+      "buttons",
+      "nav-list",
+      "menu",
+      "cards",
+      "tag",
+      "table",
+      "table-panel",
+      "tabs",
+      "editor-tabs",
+      "alert",
+      "avatar",
+      "dialog",
+      "forms",
+      "pagination",
+      "activity-rail",
+      "chat-composer",
+      "file-tree",
+      "kbd",
+      "page-header",
+      "setting-row",
+      "stat-card",
+      "status-bar",
+      "workbench-titlebar",
+      "atoms"
+    ],
+    "iconAssets": {
+      "source": "assets/icons",
+      "projectIconDir": "assets/icons/dl_builtin_trae",
+      "libraryKey": "dl_builtin_trae",
+      "renderMethod": "static-img",
+      "pathTemplate": "../assets/icons/dl_builtin_trae/{name}.svg",
+      "availableNames": [
+        "alert-circle",
+        "alert-triangle",
+        "alert",
+        "apple",
+        "arrow-down",
+        "arrow-expand",
+        "arrow-left",
+        "arrow-minimize",
+        "arrow-right-to-line",
+        "arrow-right",
+        "arrow-up-right",
+        "arrow-up",
+        "at",
+        "atom",
+        "bar",
+        "bell",
+        "box",
+        "bug",
+        "calendar",
+        "check-circle",
+        "check",
+        "chevron-down",
+        "chevron-right",
+        "chevron-up",
+        "circle",
+        "clock",
+        "cmd",
+        "code",
+        "columns",
+        "copy",
+        "cpu",
+        "dashboard",
+        "dollar",
+        "download",
+        "edit",
+        "extensions",
+        "external",
+        "eye",
+        "file-text",
+        "file",
+        "files",
+        "filter",
+        "folder",
+        "gear",
+        "git",
+        "github",
+        "globe",
+        "grid-2x2",
+        "hash",
+        "heart",
+        "help",
+        "home",
+        "image",
+        "info-circle",
+        "info-square",
+        "info",
+        "key",
+        "layers",
+        "layout",
+        "link",
+        "list",
+        "lock",
+        "log-out",
+        "logo",
+        "mail",
+        "menu",
+        "message-circle",
+        "message-plus",
+        "message-square",
+        "mic",
+        "minus",
+        "moon",
+        "more-h",
+        "mouse",
+        "palette",
+        "panel-bottom",
+        "pause",
+        "play",
+        "plug",
+        "plus",
+        "refresh",
+        "ruler",
+        "scroll-text",
+        "search-menu",
+        "search",
+        "send",
+        "settings",
+        "shield",
+        "sidebar-left",
+        "sidebar-right",
+        "sliders",
+        "sparkles",
+        "square",
+        "star",
+        "sun",
+        "terminal",
+        "trash",
+        "trending-down",
+        "trending-up",
+        "type",
+        "upload",
+        "user-circle",
+        "user",
+        "users",
+        "wrench",
+        "x-circle",
+        "x",
+        "zap"
+      ],
+      "totalCount": 120,
+      "coloringRule": "currentColor by default; on --bg-brand surfaces use the .0c0c0d.svg dark variant"
+    },
+    "themeMode": "dark"
+  },
+  "pages": [
+    {
+      "nodeId": "page-index",
+      "htmlSrc": "pages/index.html",
+      "title": "用户管理",
+      "pageType": "task-driven",
+      "viewportMode": "app-shell",
+      "deviceType": "desktop",
+      "qualityRisks": [
+        "dense-table",
+        "app-shell-fixed-chrome"
+      ],
+      "componentsRead": [
+        "nav-list",
+        "buttons",
+        "table",
+        "tag",
+        "page-header",
+        "avatar",
+        "forms",
+        "atoms"
+      ],
+      "extraComponentsRead": [],
+      "domIds": [],
+      "componentPlan": [
+        {
+          "slug": "nav-list",
+          "contractKind": "preview",
+          "previewFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\preview\\component-nav-list.html",
+          "contractFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\components\\nav-list.json"
+        },
+        {
+          "slug": "buttons",
+          "contractKind": "preview",
+          "previewFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\preview\\component-buttons.html",
+          "contractFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\components\\buttons.json"
+        },
+        {
+          "slug": "table",
+          "contractKind": "preview",
+          "previewFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\preview\\component-table.html",
+          "contractFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\components\\table.json"
+        },
+        {
+          "slug": "tag",
+          "contractKind": "preview",
+          "previewFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\preview\\component-tag.html",
+          "contractFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\components\\tag.json"
+        },
+        {
+          "slug": "page-header",
+          "contractKind": "preview",
+          "previewFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\preview\\component-page-header.html",
+          "contractFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\components\\page-header.json"
+        },
+        {
+          "slug": "avatar",
+          "contractKind": "preview",
+          "previewFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\preview\\component-avatar.html",
+          "contractFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\components\\avatar.json"
+        },
+        {
+          "slug": "forms",
+          "contractKind": "preview",
+          "previewFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\preview\\component-forms.html",
+          "contractFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\components\\forms.json"
+        },
+        {
+          "slug": "atoms",
+          "contractKind": "preview",
+          "previewFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\preview\\component-atoms.html",
+          "contractFile": "c:\\Users\\bigstyle\\.trae-cn\\design_libraries\\dl_builtin_trae\\components\\atoms.json"
+        }
+      ]
+    }
+  ]
+}
