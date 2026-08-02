@@ -3,7 +3,6 @@ from sqlalchemy.orm import Session
 from ..models import ChatSession
 from .llm import generate_title
 
-
 DEFAULT_SESSION_TITLE = "新会话"
 
 

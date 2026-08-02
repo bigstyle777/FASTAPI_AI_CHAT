@@ -63,7 +63,7 @@ def _clean_generated_title(title: str) -> str:
     title = re.sub(r"[\r\n]+", " ", title)
     title = re.sub(r"\s+", "", title)
     title = title.strip("，。！？、：:；;,.!?")
-    return title[:10]
+    return title[:15]
 
 
 def _get_title_model(provider: str | None, model: str | None) -> str | None:

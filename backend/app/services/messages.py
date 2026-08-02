@@ -1,5 +1,3 @@
-import logging
-
 from ..crud import (
     create_message,
     get_messages_by_session,
@@ -7,28 +5,13 @@ from ..crud import (
     update_session,
 )
 from ..exceptions import BusinessError
-from .cache import check_rate_limit, get_chat_context, set_chat_context
+from .cache import check_rate_limit
 from .llm import chat_with_ai, chat_with_ai_stream
-from .title import generate_session_title
+from .message_context import load_chat_context, save_chat_context
+from .title_queue import enqueue_session_title_generation
 
 
-logger = logging.getLogger(__name__)
-
-
-def _update_session_title_from_first_message(db, user, request):
-    try:
-        generate_session_title(
-            db=db,
-            session_id=request.session_id,
-            message=request.message,
-            user_id=user["user_id"],
-        )
-    except Exception:
-        db.rollback()
-        logger.exception("Failed to generate session title")
-
-
-def send_message_service(db, user, request):
+def _validate_message_request(db, user, request):
     message = request.message.strip()
     if not message:
         raise BusinessError("消息不能为空")
@@ -37,9 +20,15 @@ def send_message_service(db, user, request):
     if not session:
         raise BusinessError("会话不存在或已删除")
 
+    return message
+
+
+def send_message_service(db, user, request):
+    message = _validate_message_request(db, user, request)
+
     create_message(db, request.session_id, "user", message)
     update_session(db, request.session_id, message)
-    _update_session_title_from_first_message(db, user, request)
+    enqueue_session_title_generation(request.session_id, message, user["user_id"])
 
     history = get_messages_by_session(db, request.session_id)
     messages = [{"role": item.role, "content": item.content} for item in history]
@@ -71,31 +60,20 @@ def send_message_stream_service(db, user, request):
         return
 
     try:
-        message = request.message.strip()
-        if not message:
-            yield "消息不能为空"
-            return
-
-        session = get_session_by_user(db, request.session_id, user["user_id"])
-        if not session:
-            yield "会话不存在"
+        try:
+            message = _validate_message_request(db, user, request)
+        except BusinessError as error:
+            yield str(error.message)
             return
 
         create_message(db, request.session_id, "user", message)
         update_session(db, request.session_id, message)
-        _update_session_title_from_first_message(db, user, request)
+        enqueue_session_title_generation(request.session_id, message, user_id)
 
-        messages = get_chat_context(request.session_id)
-        if messages is None:
-            history = get_messages_by_session(db, request.session_id)
-            messages = [
-                {"role": item.role, "content": item.content} for item in history
-            ]
-        else:
-            messages.append({"role": "user", "content": message})
+        messages = load_chat_context(db, request.session_id, message)
 
         ai_reply = ""
-        for chunk in chat_with_ai_stream(messages, user_id=user["user_id"], db=db):
+        for chunk in chat_with_ai_stream(messages, user_id=user_id, db=db):
             ai_reply += chunk
             yield chunk
 
@@ -103,7 +81,7 @@ def send_message_stream_service(db, user, request):
         update_session(db, request.session_id, ai_reply)
 
         messages.append({"role": "assistant", "content": ai_reply})
-        set_chat_context(request.session_id, messages[-20:])
+        save_chat_context(request.session_id, messages)
 
     except Exception as error:
         yield f"Error: {str(error)}"
