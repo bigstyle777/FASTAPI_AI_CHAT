@@ -9,6 +9,7 @@ except Exception:  # pragma: no cover - optional dependency fallback
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
+from ..schemas import StreamDeltaEvent, StreamErrorEvent, StreamUsageEvent, TokenUsage
 
 
 def _get_client(api_key=None, provider="deepseek"):
@@ -149,10 +150,11 @@ def chat_with_ai(messages: list, user_id=None, db=None):
 def chat_with_ai_stream(
     messages: list, user_id: int | None = None, db: Session | None = None
 ):
+    # 找setting
     api_key, provider = _get_user_ai_settings(user_id=user_id, db=db)
     result = _get_client(api_key=api_key, provider=provider)
     if not result:
-        yield _build_fallback_reply(messages, api_key=api_key)
+        yield StreamErrorEvent(message=_build_fallback_reply(messages, api_key=api_key))
         return
 
     client, model = result
@@ -162,11 +164,29 @@ def chat_with_ai_stream(
             model=model,
             messages=messages,
             stream=True,
+            stream_options={"include_usage": True},
         )
 
         for chunk in response:
+            # 最后一个 chunk 会携带 usage
+            if getattr(chunk, "usage", None):
+                yield StreamUsageEvent(
+                    usage=TokenUsage(
+                        prompt_tokens=chunk.usage.prompt_tokens,
+                        completion_tokens=chunk.usage.completion_tokens,
+                        total_tokens=chunk.usage.total_tokens,
+                        model=model,
+                    )
+                )
+                continue
+
+            if not chunk.choices:
+                continue
+
             content = chunk.choices[0].delta.content
             if content:
-                yield content
+                yield StreamDeltaEvent(content=content)
     except Exception as error:
-        yield _build_fallback_reply(messages, api_key=api_key, error=error)
+        yield StreamErrorEvent(
+            message=_build_fallback_reply(messages, api_key=api_key, error=error)
+        )

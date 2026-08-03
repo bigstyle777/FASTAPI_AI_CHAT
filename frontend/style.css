@@ -674,6 +674,128 @@ button:disabled {
     padding: 4px 0;
 }
 
+.message-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.message-group.user {
+    align-self: flex-end;
+    max-width: min(72%, 720px);
+    align-items: flex-end;
+}
+
+.message-group.assistant {
+    align-self: center;
+    width: min(100%, 780px);
+    align-items: flex-start;
+}
+
+.message-group .message {
+    width: 100%;
+    max-width: none;
+    align-self: stretch;
+}
+
+.token-usage {
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.token-usage-summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 22px;
+    padding: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.token-usage-arrow {
+    display: inline-block;
+    transition: transform 0.16s ease;
+}
+
+.token-usage.open .token-usage-arrow {
+    transform: rotate(180deg);
+}
+
+.token-usage-detail {
+    margin-top: 2px;
+    color: var(--text-muted);
+}
+
+.message-menu-trigger {
+    width: 28px;
+    height: 28px;
+    display: grid;
+    place-items: center;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    opacity: 0;
+    transition: opacity 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+
+.message-group:hover .message-menu-trigger,
+.message-menu-trigger:focus-visible {
+    opacity: 1;
+}
+
+.message-menu-trigger:hover {
+    background: var(--panel-soft);
+    color: var(--text);
+}
+
+.message-menu {
+    position: fixed;
+    z-index: 1200;
+    min-width: 148px;
+    padding: 6px;
+    border-radius: 10px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.message-menu-item {
+    height: 36px;
+    padding: 0 12px;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    text-align: left;
+    display: flex;
+    align-items: center;
+    transition: background 0.14s ease, color 0.14s ease;
+}
+
+.message-menu-item:hover {
+    background: var(--panel-soft);
+}
+
+.message-menu-item.danger {
+    color: var(--danger);
+}
+
+.message-menu-item.danger:hover {
+    background: rgba(239, 68, 68, 0.1);
+}
+
 .empty-state {
     margin: auto;
     width: min(100%, 520px);
@@ -817,7 +939,8 @@ button:disabled {
         max-width: 88%;
     }
 
-    .session-menu-trigger {
+    .session-menu-trigger,
+    .message-menu-trigger {
         opacity: 1;
     }
 }

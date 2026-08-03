@@ -1,6 +1,6 @@
-from ...celery_worker import celery_app
+from ...core.celery_worker import celery_app
 from ...core.database import SessionLocal
-from ..title import generate_session_title
+from .title import generate_session_title
 
 
 @celery_app.task

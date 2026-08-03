@@ -7,6 +7,7 @@ let currentSessionId = null;
 let isSendingMessage = false;
 let currentCaptchaId = null;
 let currentSessionHasMessages = false;
+let editingMessageId = null;
 
 function getStoredTheme() {
     const stored = localStorage.getItem(THEME_STORAGE_KEY);
@@ -152,7 +153,7 @@ async function apiCall(url, options = {}, requestOptions = {}) {
         return response;
     } catch (error) {
         console.error('网络请求失败:', error);
-        showMessageNotice('网络请求失败，请检查后端服务是否运行', 'error');
+        showMessageNotice('网络请求失败，请检查服务器是否启动', 'error');
         return null;
     }
 }
@@ -368,6 +369,7 @@ function onDocumentClickCloseMenu(event) {
 
 function openSessionMenu(triggerBtn, sessionId, titleText) {
     closeSessionMenu();
+    closeMessageMenu();
 
     const menu = document.createElement('div');
     menu.className = 'session-menu';
@@ -405,6 +407,206 @@ function openSessionMenu(triggerBtn, sessionId, titleText) {
 
     activeSessionMenu = menu;
     document.addEventListener('click', onDocumentClickCloseMenu);
+}
+
+let activeMessageMenu = null;
+
+function closeMessageMenu() {
+    if (activeMessageMenu) {
+        activeMessageMenu.remove();
+        activeMessageMenu = null;
+    }
+    document.removeEventListener('click', onDocumentClickCloseMessageMenu);
+}
+
+function onDocumentClickCloseMessageMenu(event) {
+    if (activeMessageMenu && !activeMessageMenu.contains(event.target) && !event.target.classList.contains('message-menu-trigger')) {
+        closeMessageMenu();
+    }
+}
+
+function hasTokenUsage(usage) {
+    return !!usage && Number(usage.total_tokens || 0) > 0;
+}
+
+function normalizeTokenUsage(source = {}) {
+    return {
+        model: source.model || null,
+        prompt_tokens: Number(source.prompt_tokens || 0),
+        completion_tokens: Number(source.completion_tokens || 0),
+        total_tokens: Number(source.total_tokens || 0),
+    };
+}
+
+function createTokenUsageElement(usage) {
+    const tokenUsage = normalizeTokenUsage(usage);
+    const wrapper = document.createElement('div');
+    wrapper.className = 'token-usage';
+
+    const summary = document.createElement('button');
+    summary.type = 'button';
+    summary.className = 'token-usage-summary';
+    summary.setAttribute('aria-expanded', 'false');
+
+    const label = document.createElement('span');
+    label.textContent = `total_tokens: ${tokenUsage.total_tokens}`;
+
+    const arrow = document.createElement('span');
+    arrow.className = 'token-usage-arrow';
+    arrow.textContent = 'v';
+
+    summary.appendChild(label);
+    summary.appendChild(arrow);
+
+    const detail = document.createElement('div');
+    detail.className = 'token-usage-detail';
+    detail.hidden = true;
+    detail.innerHTML = `
+        <div>model: ${tokenUsage.model || '--'}</div>
+        <div>prompt_tokens: ${tokenUsage.prompt_tokens}</div>
+        <div>completion_tokens: ${tokenUsage.completion_tokens}</div>
+        <div>total_tokens: ${tokenUsage.total_tokens}</div>
+    `;
+
+    summary.addEventListener('click', () => {
+        const isOpen = !detail.hidden;
+        detail.hidden = isOpen;
+        summary.setAttribute('aria-expanded', String(!isOpen));
+        wrapper.classList.toggle('open', !isOpen);
+    });
+
+    wrapper.appendChild(summary);
+    wrapper.appendChild(detail);
+    return wrapper;
+}
+
+function attachTokenUsage(messageGroup, usage) {
+    if (!messageGroup || !hasTokenUsage(usage)) return;
+
+    const existing = messageGroup.querySelector('.token-usage');
+    if (existing) {
+        existing.replaceWith(createTokenUsageElement(usage));
+        return;
+    }
+
+    const menuTrigger = messageGroup.querySelector('.message-menu-trigger');
+    const usageElement = createTokenUsageElement(usage);
+    if (menuTrigger) {
+        messageGroup.insertBefore(usageElement, menuTrigger);
+    } else {
+        messageGroup.appendChild(usageElement);
+    }
+}
+
+function createMessageGroup(role, content, messageId, usage = null) {
+    const group = document.createElement('div');
+    group.className = `message-group ${role}`;
+    group.dataset.messageId = messageId;
+
+    const msgDiv = document.createElement('div');
+    msgDiv.className = `message ${role}`;
+    msgDiv.textContent = content;
+    group.appendChild(msgDiv);
+
+    if (role === 'assistant') {
+        attachTokenUsage(group, usage);
+    }
+
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'message-menu-trigger';
+    trigger.setAttribute('aria-label', '消息操作');
+    trigger.innerHTML = '&#8942;';
+    trigger.title = '更多操作';
+    trigger.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openMessageMenu(trigger, messageId, role, content);
+    });
+    group.appendChild(trigger);
+
+    return group;
+}
+
+function openMessageMenu(triggerBtn, messageId, role, content) {
+    closeMessageMenu();
+    closeSessionMenu();
+
+    const menu = document.createElement('div');
+    menu.className = 'message-menu';
+
+    if (role === 'user') {
+        const modifyItem = document.createElement('button');
+        modifyItem.type = 'button';
+        modifyItem.className = 'message-menu-item';
+        modifyItem.textContent = '修改消息';
+        modifyItem.addEventListener('click', (event) => {
+            event.stopPropagation();
+            closeMessageMenu();
+            editingMessageId = messageId;
+            const input = document.getElementById('messageInput');
+            input.value = content;
+            input.focus();
+            showMessageNotice('已进入修改该消息状态，发送后将更新原消息，并重新生成回复', 'info');
+        });
+        menu.appendChild(modifyItem);
+    }
+
+    const deleteItem = document.createElement('button');
+    deleteItem.type = 'button';
+    deleteItem.className = 'message-menu-item danger';
+    deleteItem.textContent = '删除消息';
+    deleteItem.addEventListener('click', (event) => {
+        event.stopPropagation();
+        closeMessageMenu();
+        deleteMessage(messageId);
+    });
+    menu.appendChild(deleteItem);
+
+    document.body.appendChild(menu);
+    const rect = triggerBtn.getBoundingClientRect();
+    menu.style.top = `${rect.bottom + 4}px`;
+    if (role === 'user') {
+        menu.style.left = `${rect.right - menu.offsetWidth}px`;
+    } else {
+        menu.style.left = `${rect.left}px`;
+    }
+    if (menu.offsetLeft < 8) {
+        menu.style.left = '8px';
+    }
+    if (menu.offsetLeft + menu.offsetWidth > window.innerWidth - 8) {
+        menu.style.left = `${window.innerWidth - menu.offsetWidth - 8}px`;
+    }
+
+    activeMessageMenu = menu;
+    document.addEventListener('click', onDocumentClickCloseMessageMenu);
+}
+
+async function deleteMessage(messageId) {
+    if (!messageId) {
+        showMessageNotice('无法删除：消息ID缺失', 'error');
+        return;
+    }
+
+    if (!window.confirm('确定删除这条消息吗？')) {
+        return;
+    }
+
+    try {
+        const response = await apiCall(`/chat/messages/${messageId}`, { method: 'DELETE' });
+        if (!response) return;
+
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            showMessageNotice(data.message || '删除消息失败', 'error');
+            return;
+        }
+
+        showMessageNotice(data.message || '消息已删除', 'success');
+        await loadSessionMessages(currentSessionId);
+    } catch (error) {
+        console.error('删除消息失败:', error);
+        showMessageNotice('删除消息失败', 'error');
+    }
 }
 
 function createSessionItem(session) {
@@ -627,7 +829,7 @@ function closeRenameSessionModal() {
 }
 
 async function deleteSession(sessionId) {
-    if (!window.confirm('确定删除这个会话吗？聊天记录也会一起删除。')) {
+    if (!window.confirm('确定删除该会话吗？所有消息记录也会一并删除。')) {
         return;
     }
 
@@ -751,10 +953,9 @@ async function loadSessionMessages(sessionId) {
         if (data.messages && data.messages.length > 0) {
             currentSessionHasMessages = true;
             data.messages.forEach((msg) => {
-                const msgDiv = document.createElement('div');
-                msgDiv.className = `message ${msg.role}`;
-                msgDiv.textContent = msg.content;
-                messagesContainer.appendChild(msgDiv);
+                messagesContainer.appendChild(
+                    createMessageGroup(msg.role, msg.content, msg.message_id, msg)
+                );
             });
         } else {
             currentSessionHasMessages = false;
@@ -765,6 +966,77 @@ async function loadSessionMessages(sessionId) {
     } catch (error) {
         console.error('加载消息失败:', error);
     }
+}
+
+function parseSseBuffer(buffer, onEvent) {
+    const normalized = buffer.replace(/\r\n/g, '\n');
+    const blocks = normalized.split('\n\n');
+    const rest = blocks.pop() || '';
+
+    blocks.forEach((block) => {
+        let eventName = 'message';
+        const dataLines = [];
+
+        block.split('\n').forEach((line) => {
+            if (line.startsWith('event:')) {
+                eventName = line.slice(6).trim();
+            } else if (line.startsWith('data:')) {
+                dataLines.push(line.slice(5).trimStart());
+            }
+        });
+
+        if (!dataLines.length) return;
+
+        const rawData = dataLines.join('\n');
+        try {
+            onEvent(eventName, JSON.parse(rawData));
+        } catch (error) {
+            onEvent(eventName, { type: eventName, content: rawData });
+        }
+    });
+
+    return rest;
+}
+
+async function consumeChatStream(response, aiMsgDiv, aiGroup) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const messagesContainer = document.getElementById('messages');
+    let fullReply = '';
+    let buffer = '';
+
+    const handleEvent = (eventName, payload) => {
+        const type = payload.type || eventName;
+
+        if (type === 'delta') {
+            fullReply += payload.content || '';
+            aiMsgDiv.textContent = fullReply;
+        } else if (type === 'usage') {
+            attachTokenUsage(aiGroup, payload.usage);
+        } else if (type === 'error') {
+            aiMsgDiv.textContent = payload.message || payload.content || '请求失败，请稍后再试';
+        }
+
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    };
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        buffer = parseSseBuffer(buffer, handleEvent);
+    }
+
+    const trailingChunk = decoder.decode();
+    if (trailingChunk) {
+        buffer += trailingChunk;
+    }
+    if (buffer.trim()) {
+        parseSseBuffer(`${buffer}\n\n`, handleEvent);
+    }
+
+    return fullReply;
 }
 
 async function sendMessage() {
@@ -780,6 +1052,14 @@ async function sendMessage() {
 
     if (!currentSessionId) {
         showMessageNotice('请先创建或选择一个会话', 'error');
+        return;
+    }
+
+    if (editingMessageId) {
+        const messageId = editingMessageId;
+        editingMessageId = null;
+        input.value = '';
+        await modifyMessageStream(messageId, userMessage);
         return;
     }
 
@@ -799,10 +1079,14 @@ async function sendMessage() {
     userMsgDiv.textContent = userMessage;
     messagesContainer.appendChild(userMsgDiv);
 
+    const aiGroup = document.createElement('div');
+    aiGroup.className = 'message-group assistant';
+
     const aiMsgDiv = document.createElement('div');
     aiMsgDiv.className = 'message assistant';
     aiMsgDiv.textContent = '正在思考...';
-    messagesContainer.appendChild(aiMsgDiv);
+    aiGroup.appendChild(aiMsgDiv);
+    messagesContainer.appendChild(aiGroup);
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
 
     try {
@@ -824,25 +1108,83 @@ async function sendMessage() {
             return;
         }
 
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let fullReply = '';
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            const chunk = decoder.decode(value);
-            fullReply += chunk;
-            aiMsgDiv.textContent = fullReply;
-            messagesContainer.scrollTop = messagesContainer.scrollHeight;
-        }
+        await consumeChatStream(response, aiMsgDiv, aiGroup);
 
         currentSessionHasMessages = true;
         await loadSessions();
     } catch (error) {
         console.error('发送消息失败:', error);
         aiMsgDiv.textContent = '发送消息失败，请稍后再试';
+    } finally {
+        isSendingMessage = false;
+        setLoadingState(false);
+    }
+}
+
+async function modifyMessageStream(messageId, newContent) {
+    isSendingMessage = true;
+    setLoadingState(true);
+    clearMessageNotice();
+
+    const messagesContainer = document.getElementById('messages');
+    const messageGroup = messagesContainer.querySelector(`.message-group[data-message-id="${messageId}"]`);
+
+    if (messageGroup) {
+        const messageContent = messageGroup.querySelector('.message');
+        if (messageContent) {
+            messageContent.textContent = newContent;
+        }
+
+        while (messageGroup.nextElementSibling) {
+            messageGroup.nextElementSibling.remove();
+        }
+    } else {
+        messagesContainer.innerHTML = '';
+        messagesContainer.appendChild(createMessageGroup('user', newContent, messageId));
+    }
+
+    const aiGroup = document.createElement('div');
+    aiGroup.className = 'message-group assistant';
+
+    const aiMsgDiv = document.createElement('div');
+    aiMsgDiv.className = 'message assistant';
+    aiMsgDiv.textContent = '正在修改并重新生成回复...';
+    aiGroup.appendChild(aiMsgDiv);
+    messagesContainer.appendChild(aiGroup);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+    try {
+        const response = await apiCall(
+            `/chat/messages/${messageId}/stream`,
+            {
+                method: 'PUT',
+                body: JSON.stringify({ content: newContent })
+            }
+        );
+        if (!response) return;
+
+        if (!response.ok) {
+            const errorText = await response.text().catch(() => '');
+            aiMsgDiv.textContent = errorText || '修改消息失败';
+            showMessageNotice('修改消息失败', 'error');
+            return;
+        }
+
+        if (!response.body) {
+            aiMsgDiv.textContent = '响应异常，请稍后再试';
+            showMessageNotice('修改消息失败', 'error');
+            return;
+        }
+
+        await consumeChatStream(response, aiMsgDiv, aiGroup);
+
+        currentSessionHasMessages = true;
+        showMessageNotice('修改成功', 'success');
+        await loadSessions();
+    } catch (error) {
+        console.error('修改消息失败:', error);
+        aiMsgDiv.textContent = '修改消息失败';
+        showMessageNotice('修改消息失败', 'error');
     } finally {
         isSendingMessage = false;
         setLoadingState(false);
