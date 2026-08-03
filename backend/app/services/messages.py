@@ -17,7 +17,13 @@ from ..schemas import (
     StreamUsageEvent,
     TokenUsage,
 )
-from .cache import check_rate_limit, invalidate_chat_cache
+from .cache import (
+    check_rate_limit,
+    clear_generation_status,
+    invalidate_chat_cache,
+    is_stop_requested,
+    set_generation_status,
+)
 from .llm import chat_with_ai, chat_with_ai_stream
 from .message_context import load_chat_context, save_chat_context
 from .task.title_queue import enqueue_session_title_generation
@@ -93,19 +99,27 @@ def get_messages_service(db, user, session_id):
     return {"success": True, "messages": messages}
 
 
+def stop_generation_service(session_id, user):
+    set_generation_status(session_id, "stop_requested")
+
+
 def stream_ai_reply(db, user_id, session_id, messages):
+    clear_generation_status(session_id)
     ai_reply = ""
     usage = TokenUsage()
 
     for event in chat_with_ai_stream(messages, user_id=user_id, db=db):
-        if isinstance(event, StreamDeltaEvent):
-            ai_reply += event.content
-            yield sse_event(event.type, event)
+        if is_stop_requested(session_id):
+            break
         elif isinstance(event, StreamUsageEvent):
             usage = event.usage
         elif isinstance(event, StreamErrorEvent):
+            clear_generation_status(session_id)
             yield sse_event(event.type, event)
             return
+        elif isinstance(event, StreamDeltaEvent):
+            ai_reply += event.content
+            yield sse_event(event.type, event)
 
     create_message(
         db=db,
@@ -127,6 +141,7 @@ def stream_ai_reply(db, user_id, session_id, messages):
     save_chat_context(session_id, messages)
     yield sse_event("usage", StreamUsageEvent(usage=usage))
     yield sse_event("done", StreamDoneEvent())
+    clear_generation_status(session_id)
 
 
 def modify_message_services(db, user, message_id, new_content):

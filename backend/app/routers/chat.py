@@ -128,3 +128,10 @@ def chat_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+# 暂停输出
+@router.post("/stream/{session_id}/stop")
+def stop_generation(session_id: int, user: CurrentUser):
+    stop_generation_service(session_id, user)
+    return {"success": True}
+    

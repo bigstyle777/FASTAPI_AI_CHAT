@@ -8,6 +8,8 @@ let isSendingMessage = false;
 let currentCaptchaId = null;
 let currentSessionHasMessages = false;
 let editingMessageId = null;
+let currentAbortController = null;
+let isStopping = false;
 
 function getStoredTheme() {
     const stored = localStorage.getItem(THEME_STORAGE_KEY);
@@ -82,6 +84,21 @@ function setLoadingState(isLoading, buttonId = 'sendBtn') {
         registerBtn: '注册',
     };
 
+    if (buttonId === 'sendBtn') {
+        if (isLoading) {
+            button.disabled = false;
+            button.classList.add('stop-mode');
+            button.setAttribute('aria-label', '停止生成');
+            button.textContent = '';
+        } else {
+            button.disabled = false;
+            button.classList.remove('stop-mode');
+            button.setAttribute('aria-label', '发送消息');
+            button.textContent = defaultText[buttonId];
+        }
+        return;
+    }
+
     button.disabled = isLoading;
     button.textContent = isLoading ? '处理中...' : (defaultText[buttonId] || '确定');
 }
@@ -152,6 +169,9 @@ async function apiCall(url, options = {}, requestOptions = {}) {
 
         return response;
     } catch (error) {
+        if (error.name === 'AbortError') {
+            return null;
+        }
         console.error('网络请求失败:', error);
         showMessageNotice('网络请求失败，请检查服务器是否启动', 'error');
         return null;
@@ -1020,24 +1040,57 @@ async function consumeChatStream(response, aiMsgDiv, aiGroup) {
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
     };
 
-    while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
 
-        buffer += decoder.decode(value, { stream: true });
-        buffer = parseSseBuffer(buffer, handleEvent);
-    }
+            buffer += decoder.decode(value, { stream: true });
+            buffer = parseSseBuffer(buffer, handleEvent);
+        }
 
-    const trailingChunk = decoder.decode();
-    if (trailingChunk) {
-        buffer += trailingChunk;
-    }
-    if (buffer.trim()) {
-        parseSseBuffer(`${buffer}\n\n`, handleEvent);
+        const trailingChunk = decoder.decode();
+        if (trailingChunk) {
+            buffer += trailingChunk;
+        }
+        if (buffer.trim()) {
+            parseSseBuffer(`${buffer}\n\n`, handleEvent);
+        }
+    } catch (error) {
+        if (error.name !== 'AbortError') {
+            throw error;
+        }
     }
 
     return fullReply;
 }
+
+async function stopGeneration() {
+    if (!isSendingMessage || !currentAbortController || isStopping) {
+        return;
+    }
+
+    const sessionId = currentSessionId;
+    if (!sessionId) {
+        return;
+    }
+
+    isStopping = true;
+    const btn = document.getElementById('sendBtn');
+    if (btn) btn.disabled = true;
+
+    try {
+        await apiCall(`/chat/stream/${sessionId}/stop`, { method: 'POST' });
+        showMessageNotice('已停止生成，正在收尾...', 'info');
+    } catch (error) {
+        if (error.name !== 'AbortError') {
+            console.error('停止生成失败:', error);
+        }
+        if (currentAbortController) {
+            currentAbortController.abort();
+        }
+        return;
+    }}
 
 async function sendMessage() {
     if (isSendingMessage) return;
@@ -1089,16 +1142,22 @@ async function sendMessage() {
     messagesContainer.appendChild(aiGroup);
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
 
+    currentAbortController = new AbortController();
+
     try {
         const response = await apiCall('/chat/stream', {
             method: 'POST',
             body: JSON.stringify({
                 session_id: currentSessionId,
                 message: userMessage
-            })
+            }),
+            signal: currentAbortController.signal
         });
 
         if (!response) {
+            if (!currentAbortController || currentAbortController.signal.aborted) {
+                return;
+            }
             aiMsgDiv.textContent = '请求失败，请稍后再试';
             return;
         }
@@ -1113,9 +1172,14 @@ async function sendMessage() {
         currentSessionHasMessages = true;
         await loadSessions();
     } catch (error) {
+        if (error.name === 'AbortError') {
+            return;
+        }
         console.error('发送消息失败:', error);
         aiMsgDiv.textContent = '发送消息失败，请稍后再试';
     } finally {
+        currentAbortController = null;
+        isStopping = false;
         isSendingMessage = false;
         setLoadingState(false);
     }
@@ -1153,15 +1217,23 @@ async function modifyMessageStream(messageId, newContent) {
     messagesContainer.appendChild(aiGroup);
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
 
+    currentAbortController = new AbortController();
+
     try {
         const response = await apiCall(
             `/chat/messages/${messageId}/stream`,
             {
                 method: 'PUT',
-                body: JSON.stringify({ content: newContent })
+                body: JSON.stringify({ content: newContent }),
+                signal: currentAbortController.signal
             }
         );
-        if (!response) return;
+        if (!response) {
+            if (!currentAbortController || currentAbortController.signal.aborted) {
+                return;
+            }
+            return;
+        }
 
         if (!response.ok) {
             const errorText = await response.text().catch(() => '');
@@ -1182,10 +1254,15 @@ async function modifyMessageStream(messageId, newContent) {
         showMessageNotice('修改成功', 'success');
         await loadSessions();
     } catch (error) {
+        if (error.name === 'AbortError') {
+            return;
+        }
         console.error('修改消息失败:', error);
         aiMsgDiv.textContent = '修改消息失败';
         showMessageNotice('修改消息失败', 'error');
     } finally {
+        currentAbortController = null;
+        isStopping = false;
         isSendingMessage = false;
         setLoadingState(false);
     }
@@ -1218,7 +1295,14 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('logoutBtn').addEventListener('click', handleLogout);
     document.getElementById('refreshCaptchaBtn').addEventListener('click', loadCaptcha);
     document.getElementById('newChatBtn').addEventListener('click', createNewSession);
-    document.getElementById('sendBtn').addEventListener('click', sendMessage);
+    document.getElementById('sendBtn').addEventListener('click', () => {
+        const btn = document.getElementById('sendBtn');
+        if (btn.classList.contains('stop-mode')) {
+            stopGeneration();
+        } else {
+            sendMessage();
+        }
+    });
     document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);
     document.getElementById('profileBtn').addEventListener('click', showProfilePage);
     document.getElementById('backBtn').addEventListener('click', showMainPage);

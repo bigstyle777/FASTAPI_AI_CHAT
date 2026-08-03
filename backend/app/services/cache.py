@@ -2,12 +2,15 @@ from ..core.config import settings
 from ..core.redis import (
     redis_delete,
     redis_expire,
+    redis_get,
     redis_get_json,
     redis_incr,
+    redis_set,
     redis_set_json,
 )
 
 
+# 上下文缓存
 def _chat_context_key(session_id: int):
     return f"chat_context:{session_id}"
 
@@ -35,3 +38,25 @@ def check_rate_limit(key: str, limit: int, expire_seconds: int):
     if count == 1:
         redis_expire(key, expire_seconds)
     return count <= limit  # type: ignore # ty:ignore[unsupported-operator]
+
+
+# 输出控制
+def set_generation_status(session_id: int, status: str):
+    redis_set(
+        f"chat:generation:{session_id}",
+        status,
+        ttl=settings.stop_generation_ttl_seconds,
+    )
+
+
+def get_generation_status(session_id: int):
+    return redis_get(f"chat:generation:{session_id}")
+
+
+def is_stop_requested(session_id: int):
+    status = get_generation_status(session_id)
+    return status == "stop_requested"
+
+
+def clear_generation_status(session_id: int):
+    redis_delete(f"chat:generation:{session_id}")

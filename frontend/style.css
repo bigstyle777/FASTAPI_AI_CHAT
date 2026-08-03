@@ -848,6 +848,30 @@ button:disabled {
     border-radius: 14px;
 }
 
+#sendBtn.stop-mode {
+    width: 50px;
+    background: var(--danger);
+    color: white;
+    font-size: 0;
+    position: relative;
+}
+
+#sendBtn.stop-mode::before {
+    content: "";
+    width: 16px;
+    height: 16px;
+    background: white;
+    border-radius: 3px;
+    display: block;
+    margin: auto;
+}
+
+#sendBtn.stop-mode:hover {
+    background: #dc2626;
+    transform: none;
+    box-shadow: 0 6px 18px rgba(239, 68, 68, 0.35);
+}
+
 .profile-container {
     width: min(100%, 560px);
 }
