@@ -2,7 +2,6 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from .core.database import init_db
 from .core.redis import RedisUnavailableError
 from .exceptions import BusinessError
 from .routers import chat, users
@@ -23,7 +22,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-init_db()
 
 app.include_router(users.router)
 app.include_router(chat.router)

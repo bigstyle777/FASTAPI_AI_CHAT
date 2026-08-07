@@ -25,7 +25,12 @@ from .cache import (
     set_generation_status,
 )
 from .llm import chat_with_ai, chat_with_ai_stream
-from .message_context import load_chat_context, save_chat_context
+from .message_context import (
+    get_branch_parent_message_id,
+    load_chat_context,
+    load_visible_messages,
+    save_chat_context,
+)
 from .task.title_queue import enqueue_session_title_generation
 from .utils import sse_event
 
@@ -64,15 +69,18 @@ def delete_message_service(db, user, message_id):
 def send_message_service(db, user, request):
     message = _validate_message_request(db, user, request)
 
-    create_message(db, request.session_id, "user", message)
+    parent_id = get_branch_parent_message_id(db, request.session_id)
+    user_message = create_message(
+        db, request.session_id, "user", message, parent_id=parent_id
+    )
     update_session(db, request.session_id, message)
     enqueue_session_title_generation(request.session_id, message, user["user_id"])
 
-    history = get_messages_by_session(db, request.session_id)
+    history = load_visible_messages(db, request.session_id)
     messages = [{"role": item.role, "content": item.content} for item in history]
     ai_reply = chat_with_ai(messages=messages, user_id=user["user_id"], db=db)
 
-    create_message(db, request.session_id, "assistant", ai_reply)
+    create_message(db, request.session_id, "assistant", ai_reply, parent_id=user_message.id)
     update_session(db, request.session_id, ai_reply)
 
     return {"success": True}
@@ -83,12 +91,13 @@ def get_messages_service(db, user, session_id):
     if not session:
         raise BusinessError("会话不存在或已删除")
 
-    history = get_messages_by_session(db, session_id)
+    history = load_visible_messages(db, session_id)
     messages = [
         {
             "message_id": item.id,
             "role": item.role,
             "content": item.content,
+            "is_inherited": item.session_id != session_id,
             "model": item.model,
             "prompt_tokens": item.prompt_tokens,
             "completion_tokens": item.completion_tokens,
@@ -103,7 +112,7 @@ def stop_generation_service(session_id, user):
     set_generation_status(session_id, "stop_requested")
 
 
-def stream_ai_reply(db, user_id, session_id, messages):
+def stream_ai_reply(db, user_id, session_id, messages, parent_id=None):
     clear_generation_status(session_id)
     ai_reply = ""
     usage = TokenUsage()
@@ -130,6 +139,7 @@ def stream_ai_reply(db, user_id, session_id, messages):
         prompt_tokens=usage.prompt_tokens,
         completion_tokens=usage.completion_tokens,
         total_tokens=usage.total_tokens,
+        parent_id=parent_id,
     )
     update_session(db, session_id, ai_reply)
     messages.append(
@@ -164,7 +174,9 @@ def modify_message_services(db, user, message_id, new_content):
     history = get_messages_by_session(db, message.session_id)
     messages = [{"role": item.role, "content": item.content} for item in history]
 
-    yield from stream_ai_reply(db, user["user_id"], message.session_id, messages)
+    yield from stream_ai_reply(
+        db, user["user_id"], message.session_id, messages, parent_id=message.id
+    )
     return {"success": True, "message": "修改成功"}
 
 
@@ -187,13 +199,18 @@ def send_message_stream_service(db, user, request):
             yield sse_event("error", StreamErrorEvent(message=str(error.message)))
             return
 
-        create_message(db, request.session_id, "user", message)
+        parent_id = get_branch_parent_message_id(db, request.session_id)
+        user_message = create_message(
+            db, request.session_id, "user", message, parent_id=parent_id
+        )
         update_session(db, request.session_id, message)
         enqueue_session_title_generation(request.session_id, message, user_id)
 
         messages = load_chat_context(db, request.session_id, message)
 
-        yield from stream_ai_reply(db, user_id, request.session_id, messages)
+        yield from stream_ai_reply(
+            db, user_id, request.session_id, messages, parent_id=user_message.id
+        )
 
     except Exception as error:  # noqa: BLE001
         yield sse_event("error", StreamErrorEvent(message=f"Error: {str(error)}"))

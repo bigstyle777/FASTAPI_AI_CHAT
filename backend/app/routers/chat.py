@@ -9,6 +9,7 @@ from ..schemas import (
     ActionResponse,
     ChatRequest,
     ChatSessionUpdate,
+    ChatSessionUpdateRequest,
     ChatSessionUpdateResponse,
     CreateChatSessionRequest,
     DeleteMessagesResponse,
@@ -17,19 +18,22 @@ from ..schemas import (
     SessionListResponse,
 )
 from ..services.auth import get_current_user
+from ..services.branch import create_message_branch_service
 from ..services.messages import (
     delete_message_service,
     get_messages_service,
     modify_message_services,
     send_message_service,
     send_message_stream_service,
+    stop_generation_service,
 )
 from ..services.sessions import (
+    create_branch_service,
     create_session_service,
     delete_messages_service,
     delete_session_service,
     get_sessions_service,
-    update_session_name_service,
+    update_session_service,
 )
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
@@ -61,11 +65,11 @@ def delete_session(
     return delete_session_service(db, user, session_id)
 
 
-@router.post("/sessions/{session_id}", response_model=ChatSessionUpdateResponse)
-def update_session_name(
-    session_id: int, request: ChatSessionUpdate, user: CurrentUser, db: Database
+@router.patch("/sessions/{session_id}", response_model=ChatSessionUpdateResponse)
+def update_session(
+    session_id: int, request: ChatSessionUpdateRequest, user: CurrentUser, db: Database
 ):
-    return update_session_name_service(db, user, session_id, request.title)
+    return update_session_service(db, user, session_id, request)
 
 
 # messages
@@ -129,9 +133,19 @@ def chat_stream(
         },
     )
 
+
 # 暂停输出
 @router.post("/stream/{session_id}/stop")
 def stop_generation(session_id: int, user: CurrentUser):
     stop_generation_service(session_id, user)
     return {"success": True}
-    
+
+
+@router.post("/sessions/{session_id}/branch")
+def create_branch_session(session_id: int, user: CurrentUser, db: Database):
+    return create_branch_service(db, user, session_id=session_id)
+
+
+@router.post("/messages/{message_id}/branch")
+def create_message_branch(message_id: int, user: CurrentUser, db: Database):
+    return create_message_branch_service(db, user, message_id=message_id)

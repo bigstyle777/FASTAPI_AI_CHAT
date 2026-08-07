@@ -1,14 +1,13 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import field_validator, model_validator
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 找项目路径
 APP_DIR = Path(__file__).resolve().parents[1]
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_DATABASE_PATH = BACKEND_DIR / "data" / "chat.db"
 
 
 class Settings(BaseSettings):
@@ -35,18 +34,9 @@ class Settings(BaseSettings):
     captcha_ttl_seconds: int = 300
     user_cache_ttl_seconds: int = 60 * 60 * 24
     user_settings_cache_ttl_seconds: int = 3600
-    database_path: Path = DEFAULT_DATABASE_PATH
-    database_url: str | None = None
+    database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/aichat"
     chat_ttl_seconds: int = 60 * 60
     stop_generation_ttl_seconds: int = 60 * 5
-
-    @field_validator("database_path", mode="before")
-    @classmethod
-    def resolve_database_path(cls, value):
-        path = Path(value) if value else DEFAULT_DATABASE_PATH
-        if path.is_absolute():
-            return path
-        return PROJECT_ROOT / path
 
     @model_validator(mode="after")
     def fill_derived_defaults(self):
@@ -54,8 +44,6 @@ class Settings(BaseSettings):
             self.openai_model = self.ai_model or "gpt-4o-mini"
         if not self.deepseek_model:
             self.deepseek_model = self.ai_model or "deepseek-v4-flash"
-        if not self.database_url:
-            self.database_url = f"sqlite:///{self.database_path.as_posix()}"
         return self
 
 

@@ -1,8 +1,8 @@
-"""initial
+"""initial schema
 
-Revision ID: a944a9709801
+Revision ID: 6656070d39ea
 Revises: 
-Create Date: 2026-07-24 14:40:32.948613
+Create Date: 2026-08-04 16:59:41.232403
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'a944a9709801'
+revision: str = '6656070d39ea'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -30,12 +30,14 @@ def upgrade() -> None:
     )
     op.create_table('chat_sessions',
     sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
+    sa.Column('parent_session_id', sa.Integer(), nullable=True),
     sa.Column('user_id', sa.Integer(), nullable=False),
     sa.Column('title', sa.String(), nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.Column('last_message', sa.Text(), nullable=True),
     sa.Column('is_deleted', sa.Boolean(), nullable=False),
+    sa.ForeignKeyConstraint(['parent_session_id'], ['chat_sessions.id'], ),
     sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
@@ -55,7 +57,14 @@ def upgrade() -> None:
     sa.Column('session_id', sa.Integer(), nullable=False),
     sa.Column('role', sa.String(), nullable=False),
     sa.Column('content', sa.Text(), nullable=False),
+    sa.Column('model', sa.String(length=50), nullable=True),
+    sa.Column('prompt_tokens', sa.Integer(), nullable=False),
+    sa.Column('completion_tokens', sa.Integer(), nullable=False),
+    sa.Column('total_tokens', sa.Integer(), nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.Column('parent_id', sa.Integer(), nullable=True),
+    sa.ForeignKeyConstraint(['parent_id'], ['messages.id'], ),
     sa.ForeignKeyConstraint(['session_id'], ['chat_sessions.id'], ),
     sa.PrimaryKeyConstraint('id')
     )

@@ -71,6 +71,7 @@ class SessionResponse(BaseModel):
     session_id: int
     title: str
     last_message: Optional[str] = None
+    is_pinned: bool = False
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -84,6 +85,7 @@ class MessageResponse(BaseModel):
     message_id: int
     role: str
     content: str
+    is_inherited: bool = False
     model: Optional[str] = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
@@ -127,10 +129,16 @@ class ChatSessionUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=100, description="聊天会话的标题")
 
 
+class ChatSessionUpdateRequest(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1, max_length=100, description="聊天会话的标题")
+    is_pinned: bool | None = None
+
+
 class ChatSessionUpdateResponse(BaseModel):
     success: bool
     session_id: int
     title: str
+    is_pinned: bool = False
 
 
 # token字段

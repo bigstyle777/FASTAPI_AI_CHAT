@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
-from .cache import delete_chat_context
+
 from ..crud import (
+    create_message,
     create_session,
     delete_empty_sessions_by_user,
     delete_messages_by_session,
@@ -8,11 +9,12 @@ from ..crud import (
     get_messages_by_session,
     get_session_by_user,
     get_sessions_by_user,
-    rename_session,
     session_has_messages,
-    update_session_name,
+    update_session,
 )
 from ..exceptions import BusinessError
+from .cache import delete_chat_context
+from .message_context import save_chat_context
 
 
 def _format_dt(value):
@@ -29,33 +31,28 @@ def create_session_service(db, user, request):
     return {"success": True, "session_id": chat_session.id}
 
 
-def update_session_service(db, user, session_id, request):
-    session = get_session_by_user(db, session_id, user["user_id"])
-    if not session:
-        raise BusinessError("会话不存在或已删除")
-
-    title = (request.title or "").strip()
-    if not title:
-        raise BusinessError("会话名称不能为空")
-
-    renamed_session = rename_session(db, session_id, title)
-    return {
-        "success": True,
-        "session_id": renamed_session.id,
-        "title": renamed_session.title,
-    }
-
-
-def update_session_name_service(db: Session, user, session_id, new_name: str):
+def update_session_service(db: Session, user, session_id: int, request):
     session = get_session_by_user(db, session_id, user_id=user["user_id"])
     if not session:
         raise BusinessError("会话不存在或已删除")
 
-    title = (new_name or "").strip()
-    if not title:
-        raise BusinessError("会话名称不能为空")
+    title = None
+    if request.title is not None:
+        title = request.title.strip()
+        if not title:
+            raise BusinessError("会话名称不能为空")
 
-    chat_session = update_session_name(db, session.id, title)
+    if title is None and request.is_pinned is None:
+        raise BusinessError("没有需要更新的字段")
+
+    chat_session = update_session(
+        db,
+        session.id,
+        title=title,
+        is_pinned=request.is_pinned,
+        user_id=user["user_id"],
+    )
+
     if not chat_session:
         raise BusinessError("会话不存在或已删除")
 
@@ -63,6 +60,7 @@ def update_session_name_service(db: Session, user, session_id, new_name: str):
         "success": True,
         "session_id": chat_session.id,
         "title": chat_session.title,
+        "is_pinned": chat_session.is_pinned,
     }
 
 
@@ -108,8 +106,42 @@ def get_sessions_service(db, user):
                 "session_id": session.id,
                 "title": session.title,
                 "last_message": session.last_message,
+                "is_pinned": session.is_pinned,
                 "created_at": _format_dt(session.created_at),
                 "updated_at": _format_dt(session.updated_at),
             }
         )
     return {"success": True, "sessions": result}
+
+
+def create_branch_service(db, user, session_id):
+    session = get_session_by_user(db, session_id, user["user_id"])
+    if not session:
+        raise BusinessError("会话不存在或已删除")
+    new_session = create_session(
+        db, user["user_id"], f"分支·{session.title}", parent_session_id=session_id
+    )
+
+    messages = get_messages_by_session(db, session_id)
+    for message in messages:
+        create_message(
+            db=db,
+            session_id=new_session.id,
+            role=message.role,
+            content=message.content,
+            model=message.model,
+            prompt_tokens=message.prompt_tokens,
+            completion_tokens=message.completion_tokens,
+            total_tokens=message.total_tokens,
+        )
+
+    new_messages = [
+        {
+            "role": m.role,
+            "content": m.content,
+        }
+        for m in messages
+    ]
+
+    save_chat_context(session_id=new_session.id, messages=new_messages)
+    return {"success": True, "session_id": new_session.id}

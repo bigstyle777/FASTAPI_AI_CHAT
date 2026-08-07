@@ -9,5 +9,6 @@ pydantic-settings==2.10.1
 python-multipart==0.0.20
 SQLAlchemy==2.0.51
 alembic==1.18.5
+psycopg[binary]==3.2.9
 redis==8.0.1
 celery==5.6.3

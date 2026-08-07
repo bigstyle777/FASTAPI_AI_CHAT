@@ -11,6 +11,279 @@ let editingMessageId = null;
 let currentAbortController = null;
 let isStopping = false;
 
+// ===== Markdown 渲染模块 =====
+let mdInstance = null;
+let mermaidInitialized = false;
+
+function getMarkdownInstance() {
+    if (mdInstance) return mdInstance;
+    if (!window.markdownit) return null;
+    mdInstance = window.markdownit({
+        html: false,
+        breaks: true,
+        linkify: true,
+        highlight(code, lang) {
+            const language = (lang || '').toLowerCase();
+            if (language === 'mermaid') {
+                return `<pre class="mermaid-pre"><code class="language-mermaid">${window.markdownit.utils.escapeHtml(code)}</code></pre>`;
+            }
+            if (window.hljs && language && window.hljs.getLanguage(language)) {
+                try {
+                    return `<pre class="hljs"><code class="hljs language-${language}">${window.hljs.highlight(code, { language }).value}</code></pre>`;
+                } catch (_) { }
+            }
+            if (window.hljs) {
+                try {
+                    return `<pre class="hljs"><code class="hljs">${window.hljs.highlightAuto(code).value}</code></pre>`;
+                } catch (_) { }
+            }
+            return `<pre class="hljs"><code>${window.markdownit.utils.escapeHtml(code)}</code></pre>`;
+        }
+    });
+    if (window.markdownitKatex) {
+        mdInstance.use(window.markdownitKatex);
+    }
+    return mdInstance;
+}
+
+function renderMarkdownContent(text, container, isStreaming = false) {
+    const md = getMarkdownInstance();
+    if (!md || !text) {
+        container.textContent = text || '';
+        return;
+    }
+    try {
+        container.innerHTML = md.render(text);
+    } catch (error) {
+        console.warn('Markdown render failed:', error);
+        container.textContent = text;
+        return;
+    }
+    container.classList.add('markdown-body');
+    container.removeAttribute('data-stream-stable-text');
+    if (!isStreaming) {
+        renderMermaidBlocks(container);
+        addCodeCopyButtons(container);
+    }
+}
+
+function findUnclosedFenceStart(text) {
+    const fencePattern = /^([`~]{3,})(.*)$/;
+    const lines = text.split(/(\n)/);
+    let offset = 0;
+    let openFence = null;
+
+    for (let i = 0; i < lines.length; i += 2) {
+        const line = lines[i] || '';
+        const newline = lines[i + 1] || '';
+        const match = line.match(fencePattern);
+        if (match) {
+            const marker = match[1];
+            const fence = {
+                char: marker[0],
+                length: marker.length,
+                start: offset,
+            };
+
+            if (!openFence) {
+                openFence = fence;
+            } else if (
+                fence.char === openFence.char &&
+                fence.length >= openFence.length
+            ) {
+                openFence = null;
+            }
+        }
+        offset += line.length + newline.length;
+    }
+
+    return openFence ? openFence.start : -1;
+}
+
+function findUnclosedInlineCodeStart(text, limit) {
+    let openIndex = -1;
+    for (let i = 0; i < limit; i += 1) {
+        if (text[i] !== '`') continue;
+        if (i > 0 && text[i - 1] === '\\') continue;
+
+        let end = i + 1;
+        while (end < limit && text[end] === '`') {
+            end += 1;
+        }
+
+        if (openIndex === -1) {
+            openIndex = i;
+        } else {
+            openIndex = -1;
+        }
+        i = end - 1;
+    }
+    return openIndex;
+}
+
+function findUnclosedBlockMathStart(text, limit) {
+    let openIndex = -1;
+    for (let i = 0; i < limit - 1; i += 1) {
+        if (text[i] !== '$' || text[i + 1] !== '$') continue;
+        if (i > 0 && text[i - 1] === '\\') continue;
+        openIndex = openIndex === -1 ? i : -1;
+        i += 1;
+    }
+    return openIndex;
+}
+
+function findUnclosedInlineMathStart(text, limit) {
+    let openIndex = -1;
+    for (let i = 0; i < limit; i += 1) {
+        if (text[i] !== '$') continue;
+        if (i > 0 && text[i - 1] === '\\') continue;
+        if (text[i + 1] === '$' || text[i - 1] === '$') continue;
+        openIndex = openIndex === -1 ? i : -1;
+    }
+    return openIndex;
+}
+
+function findStreamingMarkdownBoundary(text) {
+    if (!text) return 0;
+
+    let safeLimit = text.length;
+    const unclosedFenceStart = findUnclosedFenceStart(text);
+    if (unclosedFenceStart >= 0) {
+        safeLimit = Math.min(safeLimit, unclosedFenceStart);
+    }
+
+    const unclosedCodeStart = findUnclosedInlineCodeStart(text, safeLimit);
+    if (unclosedCodeStart >= 0) {
+        safeLimit = Math.min(safeLimit, unclosedCodeStart);
+    }
+
+    const unclosedMathStart = findUnclosedBlockMathStart(text, safeLimit);
+    if (unclosedMathStart >= 0) {
+        safeLimit = Math.min(safeLimit, unclosedMathStart);
+    }
+
+    const unclosedInlineMathStart = findUnclosedInlineMathStart(text, safeLimit);
+    if (unclosedInlineMathStart >= 0) {
+        safeLimit = Math.min(safeLimit, unclosedInlineMathStart);
+    }
+
+    const blockBoundary = text.lastIndexOf('\n\n', safeLimit);
+    if (blockBoundary >= 0) {
+        return blockBoundary + 2;
+    }
+
+    const lineBoundary = text.lastIndexOf('\n', safeLimit);
+    if (lineBoundary >= 80) {
+        return lineBoundary + 1;
+    }
+
+    return safeLimit;
+}
+
+function renderStreamingMarkdownContent(text, container) {
+    const md = getMarkdownInstance();
+    if (!md || !text) {
+        container.textContent = text || '';
+        return;
+    }
+
+    const boundary = findStreamingMarkdownBoundary(text);
+    const stableText = text.slice(0, boundary);
+    const tailText = text.slice(boundary);
+
+    try {
+        if (stableText && container.dataset.streamStableText !== stableText) {
+            container.innerHTML = md.render(stableText);
+            container.classList.add('markdown-body');
+            container.dataset.streamStableText = stableText;
+        } else if (!stableText) {
+            container.textContent = '';
+            container.classList.add('markdown-body');
+            container.dataset.streamStableText = '';
+        }
+
+        let tail = Array.from(container.children).find((child) =>
+            child.classList.contains('markdown-stream-tail')
+        );
+        if (tailText) {
+            if (!tail) {
+                tail = document.createElement('span');
+                tail.className = 'markdown-stream-tail';
+                container.appendChild(tail);
+            }
+            tail.textContent = tailText;
+        } else if (tail) {
+            tail.remove();
+        }
+    } catch (error) {
+        console.warn('Streaming markdown render failed:', error);
+        container.textContent = text;
+    }
+}
+
+function addCodeCopyButtons(container) {
+    container.querySelectorAll('pre').forEach((pre) => {
+        if (pre.classList.contains('mermaid-pre')) return;
+        if (pre.querySelector('.code-copy-btn')) return;
+        const code = pre.querySelector('code');
+        if (!code) return;
+        pre.classList.add('code-block');
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'code-copy-btn';
+        btn.textContent = '复制';
+        btn.title = '复制代码';
+        btn.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(code.textContent);
+                btn.textContent = '已复制';
+            } catch (_) {
+                btn.textContent = '失败';
+            }
+            setTimeout(() => { btn.textContent = '复制'; }, 1500);
+        });
+        pre.appendChild(btn);
+    });
+}
+
+async function renderMermaidBlocks(container) {
+    if (!window.mermaid) return;
+    const codeBlocks = Array.from(container.querySelectorAll('pre.mermaid-pre code.language-mermaid'));
+    if (codeBlocks.length === 0) return;
+    if (!mermaidInitialized) {
+        const theme = resolveTheme(getStoredTheme()) === 'dark' ? 'dark' : 'default';
+        window.mermaid.initialize({ startOnLoad: false, theme, securityLevel: 'loose' });
+        mermaidInitialized = true;
+    }
+    for (let i = 0; i < codeBlocks.length; i++) {
+        const codeEl = codeBlocks[i];
+        const pre = codeEl.parentElement;
+        const graphDef = codeEl.textContent;
+        const wrapper = document.createElement('div');
+        wrapper.className = 'mermaid-wrapper';
+        const target = document.createElement('div');
+        wrapper.appendChild(target);
+        pre.replaceWith(wrapper);
+        try {
+            const id = `mermaid-${Date.now()}-${i}`;
+            const { svg } = await window.mermaid.render(id, graphDef);
+            target.innerHTML = svg;
+        } catch (err) {
+            target.textContent = '流程图渲染失败: ' + (err.message || err);
+        }
+    }
+}
+
+function switchMarkdownTheme(resolved) {
+    const light = document.getElementById('md-theme-light');
+    const dark = document.getElementById('md-theme-dark');
+    if (light) light.disabled = resolved === 'dark';
+    if (dark) dark.disabled = resolved !== 'dark';
+    if (mermaidInitialized && window.mermaid) {
+        window.mermaid.initialize({ startOnLoad: false, theme: resolved === 'dark' ? 'dark' : 'default', securityLevel: 'loose' });
+    }
+}
+
 function getStoredTheme() {
     const stored = localStorage.getItem(THEME_STORAGE_KEY);
     return VALID_THEMES.includes(stored) ? stored : 'system';
@@ -29,6 +302,7 @@ function applyTheme(theme) {
     document.querySelectorAll('.theme-btn').forEach((btn) => {
         btn.classList.toggle('active', btn.dataset.theme === theme);
     });
+    switchMarkdownTheme(resolved);
 }
 
 function setTheme(theme) {
@@ -387,12 +661,22 @@ function onDocumentClickCloseMenu(event) {
     }
 }
 
-function openSessionMenu(triggerBtn, sessionId, titleText) {
+function openSessionMenu(triggerBtn, sessionId, titleText, isPinned = false) {
     closeSessionMenu();
     closeMessageMenu();
 
     const menu = document.createElement('div');
     menu.className = 'session-menu';
+
+    const pinItem = document.createElement('button');
+    pinItem.type = 'button';
+    pinItem.className = 'session-menu-item';
+    pinItem.textContent = isPinned ? '取消置顶' : '置顶聊天';
+    pinItem.addEventListener('click', (event) => {
+        event.stopPropagation();
+        closeSessionMenu();
+        toggleSessionPin(sessionId, !isPinned);
+    });
 
     const renameItem = document.createElement('button');
     renameItem.type = 'button';
@@ -414,6 +698,7 @@ function openSessionMenu(triggerBtn, sessionId, titleText) {
         deleteSession(sessionId);
     });
 
+    menu.appendChild(pinItem);
     menu.appendChild(renameItem);
     menu.appendChild(deleteItem);
 
@@ -427,6 +712,28 @@ function openSessionMenu(triggerBtn, sessionId, titleText) {
 
     activeSessionMenu = menu;
     document.addEventListener('click', onDocumentClickCloseMenu);
+}
+
+async function toggleSessionPin(sessionId, isPinned) {
+    try {
+        const response = await apiCall(`/chat/sessions/${sessionId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ is_pinned: isPinned })
+        });
+        if (!response) return;
+
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            showMessageNotice(data.message || '置顶失败', 'error');
+            return;
+        }
+
+        await loadSessions();
+        showMessageNotice(isPinned ? '已置顶' : '已取消置顶', 'success');
+    } catch (error) {
+        console.error('置顶失败:', error);
+        showMessageNotice('置顶失败', 'error');
+    }
 }
 
 let activeMessageMenu = null;
@@ -509,10 +816,10 @@ function attachTokenUsage(messageGroup, usage) {
         return;
     }
 
-    const menuTrigger = messageGroup.querySelector('.message-menu-trigger');
+    const actionsWrapper = messageGroup.querySelector('.message-actions');
     const usageElement = createTokenUsageElement(usage);
-    if (menuTrigger) {
-        messageGroup.insertBefore(usageElement, menuTrigger);
+    if (actionsWrapper) {
+        messageGroup.insertBefore(usageElement, actionsWrapper);
     } else {
         messageGroup.appendChild(usageElement);
     }
@@ -522,14 +829,65 @@ function createMessageGroup(role, content, messageId, usage = null) {
     const group = document.createElement('div');
     group.className = `message-group ${role}`;
     group.dataset.messageId = messageId;
+    const isInherited = !!usage?.is_inherited;
 
     const msgDiv = document.createElement('div');
     msgDiv.className = `message ${role}`;
-    msgDiv.textContent = content;
+    if (role === 'assistant') {
+        renderMarkdownContent(content, msgDiv);
+    } else {
+        msgDiv.textContent = content;
+    }
     group.appendChild(msgDiv);
 
     if (role === 'assistant') {
         attachTokenUsage(group, usage);
+    }
+
+    if (isInherited && role !== 'user') {
+        return group;
+    }
+
+    const actionsWrapper = document.createElement('div');
+    actionsWrapper.className = 'message-actions';
+
+    if (role === 'assistant') {
+        const likeBtn = document.createElement('button');
+        likeBtn.type = 'button';
+        likeBtn.className = 'message-action-btn like-btn';
+        likeBtn.setAttribute('aria-label', '点赞');
+        likeBtn.title = '点赞';
+        likeBtn.innerHTML = '&#128077;';
+        likeBtn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            toggleFeedback(likeBtn, 'like');
+        });
+
+        const dislikeBtn = document.createElement('button');
+        dislikeBtn.type = 'button';
+        dislikeBtn.className = 'message-action-btn dislike-btn';
+        dislikeBtn.setAttribute('aria-label', '踩');
+        dislikeBtn.title = '踩';
+        dislikeBtn.innerHTML = '&#128078;';
+        dislikeBtn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            toggleFeedback(dislikeBtn, 'dislike');
+        });
+
+        const copyBtn = document.createElement('button');
+        copyBtn.type = 'button';
+        copyBtn.className = 'message-action-btn copy-btn';
+        copyBtn.setAttribute('aria-label', '复制');
+        copyBtn.title = '复制';
+        copyBtn.innerHTML = '&#128203;';
+        copyBtn.addEventListener('click', async (event) => {
+            event.stopPropagation();
+            await copyMessageContent(content);
+        });
+
+        actionsWrapper.appendChild(likeBtn);
+        actionsWrapper.appendChild(dislikeBtn);
+        actionsWrapper.appendChild(copyBtn);
     }
 
     const trigger = document.createElement('button');
@@ -540,21 +898,50 @@ function createMessageGroup(role, content, messageId, usage = null) {
     trigger.title = '更多操作';
     trigger.addEventListener('click', (event) => {
         event.stopPropagation();
-        openMessageMenu(trigger, messageId, role, content);
+        openMessageMenu(trigger, messageId, role, content, isInherited);
     });
-    group.appendChild(trigger);
+    actionsWrapper.appendChild(trigger);
+
+    group.appendChild(actionsWrapper);
 
     return group;
 }
 
-function openMessageMenu(triggerBtn, messageId, role, content) {
+function toggleFeedback(targetBtn, type) {
+    const wrapper = targetBtn.closest('.message-actions');
+    if (!wrapper) return;
+
+    const likeBtn = wrapper.querySelector('.like-btn');
+    const dislikeBtn = wrapper.querySelector('.dislike-btn');
+
+    const wasActive = targetBtn.classList.contains('active');
+    likeBtn.classList.remove('active');
+    dislikeBtn.classList.remove('active');
+
+    if (!wasActive) {
+        targetBtn.classList.add('active');
+        showMessageNotice(type === 'like' ? '已点赞' : '已踩', 'success');
+    }
+}
+
+async function copyMessageContent(content) {
+    try {
+        await navigator.clipboard.writeText(content);
+        showMessageNotice('已复制到剪贴板', 'success');
+    } catch (error) {
+        console.error('复制失败:', error);
+        showMessageNotice('复制失败', 'error');
+    }
+}
+
+function openMessageMenu(triggerBtn, messageId, role, content, isInherited = false) {
     closeMessageMenu();
     closeSessionMenu();
 
     const menu = document.createElement('div');
     menu.className = 'message-menu';
 
-    if (role === 'user') {
+    if (role === 'user' && !isInherited) {
         const modifyItem = document.createElement('button');
         modifyItem.type = 'button';
         modifyItem.className = 'message-menu-item';
@@ -569,18 +956,47 @@ function openMessageMenu(triggerBtn, messageId, role, content) {
             showMessageNotice('已进入修改该消息状态，发送后将更新原消息，并重新生成回复', 'info');
         });
         menu.appendChild(modifyItem);
+
     }
 
-    const deleteItem = document.createElement('button');
-    deleteItem.type = 'button';
-    deleteItem.className = 'message-menu-item danger';
-    deleteItem.textContent = '删除消息';
-    deleteItem.addEventListener('click', (event) => {
-        event.stopPropagation();
-        closeMessageMenu();
-        deleteMessage(messageId);
-    });
-    menu.appendChild(deleteItem);
+    if (role === 'user') {
+        const branchItem = document.createElement('button');
+        branchItem.type = 'button';
+        branchItem.className = 'message-menu-item';
+        branchItem.textContent = '在新对话中建立分支';
+        branchItem.addEventListener('click', (event) => {
+            event.stopPropagation();
+            closeMessageMenu();
+            createMessageBranch(messageId);
+        });
+        menu.appendChild(branchItem);
+    }
+
+    if (role === 'assistant') {
+        const branchItem = document.createElement('button');
+        branchItem.type = 'button';
+        branchItem.className = 'message-menu-item';
+        branchItem.textContent = '在新分支中新建对话';
+        branchItem.addEventListener('click', (event) => {
+            event.stopPropagation();
+            closeMessageMenu();
+            createMessageBranch(messageId);
+        });
+        menu.appendChild(branchItem);
+    }
+
+    if (!isInherited) {
+        const deleteItem = document.createElement('button');
+        deleteItem.type = 'button';
+        deleteItem.className = 'message-menu-item danger';
+        deleteItem.textContent = '删除消息';
+        deleteItem.addEventListener('click', (event) => {
+            event.stopPropagation();
+            closeMessageMenu();
+            deleteMessage(messageId);
+        });
+        menu.appendChild(deleteItem);
+    }
 
     document.body.appendChild(menu);
     const rect = triggerBtn.getBoundingClientRect();
@@ -629,13 +1045,80 @@ async function deleteMessage(messageId) {
     }
 }
 
+async function createMessageBranch(messageId) {
+    if (isSendingMessage) {
+        showMessageNotice('消息发送中，请稍后再建立分支', 'error');
+        return;
+    }
+
+    try {
+        const response = await apiCall(
+            `/chat/messages/${messageId}/branch`,
+            { method: 'POST' }
+        );
+        if (!response) return;
+
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            showMessageNotice(data.message || '建立分支失败', 'error');
+            return;
+        }
+
+        currentSessionId = data.session_id;
+        currentSessionHasMessages = true;
+        await loadSessions();
+        showMessageNotice('已在新对话中建立分支', 'success');
+    } catch (error) {
+        console.error('建立分支失败:', error);
+        showMessageNotice('建立分支失败', 'error');
+    }
+}
+
+async function createSessionBranch() {
+    if (isSendingMessage) {
+        showMessageNotice('消息发送中，请稍后再建立分支', 'error');
+        return;
+    }
+
+    if (!currentSessionId) {
+        showMessageNotice('当前没有可分支的会话', 'error');
+        return;
+    }
+
+    try {
+        const response = await apiCall(
+            `/chat/sessions/${currentSessionId}/branch`,
+            { method: 'POST' }
+        );
+        if (!response) return;
+
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            showMessageNotice(data.message || '建立分支对话失败', 'error');
+            return;
+        }
+
+        currentSessionId = data.session_id;
+        currentSessionHasMessages = true;
+        await loadSessions();
+        showMessageNotice('已在新分支中新建对话', 'success');
+    } catch (error) {
+        console.error('建立分支对话失败:', error);
+        showMessageNotice('建立分支对话失败', 'error');
+    }
+}
+
 function createSessionItem(session) {
     const sessionId = Number(session.session_id);
     const title = session.title || '新会话';
     const lastMessage = session.last_message || '暂无消息';
+    const isPinned = !!session.is_pinned;
     const sessionItem = document.createElement('div');
     sessionItem.className = 'session-item';
     sessionItem.dataset.sessionId = sessionId;
+    if (isPinned) {
+        sessionItem.classList.add('pinned');
+    }
     if (Number(currentSessionId) === sessionId) {
         sessionItem.classList.add('active');
     }
@@ -662,7 +1145,7 @@ function createSessionItem(session) {
     menuTrigger.title = '更多操作';
     menuTrigger.addEventListener('click', (event) => {
         event.stopPropagation();
-        openSessionMenu(menuTrigger, sessionId, titleElement.textContent);
+        openSessionMenu(menuTrigger, sessionId, titleElement.textContent, isPinned);
     });
 
     content.appendChild(titleElement);
@@ -806,7 +1289,7 @@ function openRenameSessionModal(sessionId, currentTitle) {
 
         try {
             const response = await apiCall(`/chat/sessions/${sessionId}`, {
-                method: 'POST',
+                method: 'PATCH',
                 body: JSON.stringify({ title: newTitle })
             });
             if (!response) {
@@ -1024,16 +1507,33 @@ async function consumeChatStream(response, aiMsgDiv, aiGroup) {
     const messagesContainer = document.getElementById('messages');
     let fullReply = '';
     let buffer = '';
+    let hasError = false;
+    let renderScheduled = false;
+    let renderVersion = 0;
+
+    const scheduleStreamingRender = () => {
+        if (renderScheduled) return;
+        renderScheduled = true;
+        const scheduledVersion = renderVersion;
+        requestAnimationFrame(() => {
+            renderScheduled = false;
+            if (scheduledVersion !== renderVersion) return;
+            renderStreamingMarkdownContent(fullReply, aiMsgDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        });
+    };
 
     const handleEvent = (eventName, payload) => {
         const type = payload.type || eventName;
 
         if (type === 'delta') {
             fullReply += payload.content || '';
-            aiMsgDiv.textContent = fullReply;
+            scheduleStreamingRender();
         } else if (type === 'usage') {
             attachTokenUsage(aiGroup, payload.usage);
         } else if (type === 'error') {
+            hasError = true;
+            renderVersion += 1;
             aiMsgDiv.textContent = payload.message || payload.content || '请求失败，请稍后再试';
         }
 
@@ -1060,6 +1560,12 @@ async function consumeChatStream(response, aiMsgDiv, aiGroup) {
         if (error.name !== 'AbortError') {
             throw error;
         }
+    }
+
+    if (fullReply && !hasError) {
+        renderVersion += 1;
+        renderScheduled = false;
+        renderMarkdownContent(fullReply, aiMsgDiv, false);
     }
 
     return fullReply;

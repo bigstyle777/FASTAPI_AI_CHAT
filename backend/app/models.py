@@ -24,6 +24,12 @@ class ChatSession(Base):
     __tablename__ = "chat_sessions"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    parent_session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("chat_sessions.id"), nullable=True
+    )
+    branch_from_message_id: Mapped[int | None] = mapped_column(
+        ForeignKey("messages.id"), nullable=True
+    )
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     title: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -34,9 +40,14 @@ class ChatSession(Base):
     )
     last_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
-
+    is_pinned: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
     user: Mapped["User"] = relationship(back_populates="sessions")
-    messages: Mapped[list["Message"]] = relationship(back_populates="session")
+    messages: Mapped[list["Message"]] = relationship(
+        back_populates="session",
+        foreign_keys="Message.session_id",
+    )
 
 
 class Message(Base):
@@ -64,7 +75,10 @@ class Message(Base):
         ForeignKey("messages.id"), nullable=True
     )
 
-    session: Mapped["ChatSession"] = relationship(back_populates="messages")
+    session: Mapped["ChatSession"] = relationship(
+        back_populates="messages",
+        foreign_keys=[session_id],
+    )
 
 
 class UserSetting(Base):

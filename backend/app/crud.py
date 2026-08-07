@@ -24,11 +24,15 @@ def create_user(db, username, password):
     return user
 
 
-def create_session(db, user_id, title):
+def create_session(
+    db, user_id, title, parent_session_id=None, branch_from_message_id=None
+):
     now = datetime.now()
     chat_session = ChatSession(
         user_id=user_id,
         title=title,
+        parent_session_id=parent_session_id,
+        branch_from_message_id=branch_from_message_id,
         created_at=now,
         updated_at=now,
     )
@@ -59,6 +63,7 @@ def create_message(
     prompt_tokens=0,
     completion_tokens=0,
     total_tokens=0,
+    parent_id=None,
 ):
     message = Message(
         session_id=session_id,
@@ -69,6 +74,7 @@ def create_message(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
+        parent_id=parent_id,
     )
     db.add(message)
     db.commit()
@@ -151,26 +157,29 @@ def delete_message_pair(db, message_id, session_id):
         raise
 
 
-def update_session(db, session_id, last_message):
-    stmt = select(ChatSession).where(ChatSession.id == session_id)
+def update_session(
+    db: Session,
+    session_id: int,
+    last_message: str | None = None,
+    title: str | None = None,
+    is_pinned: bool | None = None,
+    user_id: int | None = None,
+) -> ChatSession | None:
+    stmt = select(ChatSession).where(
+        ChatSession.id == session_id,
+        ChatSession.is_deleted.is_(False),
+    )
+    if user_id is not None:
+        stmt = stmt.where(ChatSession.user_id == user_id)
     session = db.execute(stmt).scalar_one_or_none()
-    if not session:
+    if session is None:
         return None
-
-    session.last_message = last_message
-    session.updated_at = datetime.now()
-    db.commit()
-    db.refresh(session)
-    return session
-
-
-def rename_session(db, session_id, title):
-    stmt = select(ChatSession).where(ChatSession.id == session_id)
-    session = db.execute(stmt).scalar_one_or_none()
-    if not session:
-        return None
-
-    session.title = title
+    if title is not None:
+        session.title = title
+    if last_message is not None:
+        session.last_message = last_message
+    if is_pinned is not None:
+        session.is_pinned = is_pinned
     session.updated_at = datetime.now()
     db.commit()
     db.refresh(session)
@@ -204,7 +213,11 @@ def get_sessions_by_user(db, user_id):
             ChatSession.user_id == user_id,
             ChatSession.is_deleted.is_(False),
         )
-        .order_by(ChatSession.updated_at.desc(), ChatSession.id.desc())
+        .order_by(
+            ChatSession.is_pinned.desc(),
+            ChatSession.updated_at.desc(),
+            ChatSession.id.desc(),
+        )
     )
     return db.execute(stmt).scalars().all()
 
@@ -216,6 +229,45 @@ def get_session_by_user(db, session_id, user_id):
         ChatSession.is_deleted.is_(False),
     )
     return db.execute(stmt).scalar_one_or_none()
+
+
+def get_last_message_by_session(db, session_id):
+    stmt = (
+        select(Message)
+        .where(Message.session_id == session_id)
+        .order_by(Message.id.desc())
+        .limit(1)
+    )
+    return db.execute(stmt).scalar_one_or_none()
+
+
+def get_message_ancestry(db, message_id):
+    messages = []
+    seen_ids = set()
+    current_id = message_id
+
+    while current_id and current_id not in seen_ids:
+        seen_ids.add(current_id)
+        message = db.get(Message, current_id)
+        if not message:
+            break
+        messages.append(message)
+        current_id = message.parent_id
+
+    messages.reverse()
+    return messages
+
+
+def get_messages_up_to(db, session_id, message_id):
+    stmt = (
+        select(Message)
+        .where(
+            Message.session_id == session_id,
+            Message.id <= message_id,
+        )
+        .order_by(Message.id.asc())
+    )
+    return db.execute(stmt).scalars().all()
 
 
 def session_has_messages(db, session_id):
@@ -233,6 +285,10 @@ def delete_empty_sessions_by_user(db, user_id):
     now = datetime.now()
 
     for session in sessions:
+        if session.branch_from_message_id:
+            continue
+        if session.is_pinned:
+            continue
         if session_has_messages(db, session.id):
             continue
         session.is_deleted = True
