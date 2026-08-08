@@ -1,4 +1,4 @@
-const API_BASE_URL = "http://127.0.0.1:8000";
+﻿const API_BASE_URL = "http://127.0.0.1:8001";
 const THEME_STORAGE_KEY = 'aichatpro-theme';
 const VALID_THEMES = ['light', 'dark', 'system'];
 let systemThemeMedia = window.matchMedia('(prefers-color-scheme: dark)');
@@ -10,8 +10,16 @@ let currentSessionHasMessages = false;
 let editingMessageId = null;
 let currentAbortController = null;
 let isStopping = false;
+let currentUser = null;
+let currentView = 'chat';
+let adminData = {
+    dashboard: null,
+    users: [],
+    roles: [],
+    permissions: [],
+};
 
-// ===== Markdown 渲染模块 =====
+// ===== Markdown 娓叉煋妯″潡 =====
 let mdInstance = null;
 let mermaidInitialized = false;
 
@@ -231,16 +239,16 @@ function addCodeCopyButtons(container) {
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'code-copy-btn';
-        btn.textContent = '复制';
-        btn.title = '复制代码';
+        btn.textContent = '澶嶅埗';
+        btn.title = '澶嶅埗浠ｇ爜';
         btn.addEventListener('click', async () => {
             try {
                 await navigator.clipboard.writeText(code.textContent);
                 btn.textContent = '已复制';
             } catch (_) {
-                btn.textContent = '失败';
+                btn.textContent = '澶辫触';
             }
-            setTimeout(() => { btn.textContent = '复制'; }, 1500);
+            setTimeout(() => { btn.textContent = '澶嶅埗'; }, 1500);
         });
         pre.appendChild(btn);
     });
@@ -269,7 +277,7 @@ async function renderMermaidBlocks(container) {
             const { svg } = await window.mermaid.render(id, graphDef);
             target.innerHTML = svg;
         } catch (err) {
-            target.textContent = '流程图渲染失败: ' + (err.message || err);
+            target.textContent = '娴佺▼鍥炬覆鏌撳け璐? ' + (err.message || err);
         }
     }
 }
@@ -354,15 +362,15 @@ function setLoadingState(isLoading, buttonId = 'sendBtn') {
 
     const defaultText = {
         sendBtn: '发送',
-        loginBtn: '登录',
-        registerBtn: '注册',
+        loginBtn: '鐧诲綍',
+        registerBtn: '娉ㄥ唽',
     };
 
     if (buttonId === 'sendBtn') {
         if (isLoading) {
             button.disabled = false;
             button.classList.add('stop-mode');
-            button.setAttribute('aria-label', '停止生成');
+            button.setAttribute('aria-label', '鍋滄鐢熸垚');
             button.textContent = '';
         } else {
             button.disabled = false;
@@ -374,7 +382,7 @@ function setLoadingState(isLoading, buttonId = 'sendBtn') {
     }
 
     button.disabled = isLoading;
-    button.textContent = isLoading ? '处理中...' : (defaultText[buttonId] || '确定');
+    button.textContent = isLoading ? '澶勭悊涓?..' : (defaultText[buttonId] || '纭畾');
 }
 
 function renderEmptyChat() {
@@ -382,8 +390,8 @@ function renderEmptyChat() {
     messagesContainer.innerHTML = `
         <div class="empty-state">
             <div class="empty-icon">AI</div>
-            <h2>开始一次新的对话</h2>
-            <p>选择左侧会话，或新建聊天后输入你的问题。</p>
+            <h2>寮€濮嬩竴娆℃柊鐨勫璇?/h2>
+            <p>閫夋嫨宸︿晶浼氳瘽锛屾垨鏂板缓鑱婂ぉ鍚庤緭鍏ヤ綘鐨勯棶棰樸€?/p>
         </div>
     `;
 }
@@ -392,6 +400,7 @@ function showLoginPage() {
     document.getElementById('loginPage').style.display = 'flex';
     document.getElementById('mainPage').style.display = 'none';
     document.getElementById('profilePage').style.display = 'none';
+    hideAdminView();
     loadCaptcha();
 }
 
@@ -399,8 +408,8 @@ function showMainPage() {
     document.getElementById('loginPage').style.display = 'none';
     document.getElementById('mainPage').style.display = 'flex';
     document.getElementById('profilePage').style.display = 'none';
-    loadSessions();
-    loadSettings();
+    showChatView();
+    loadAuthContext();
 }
 
 function showProfilePage() {
@@ -410,11 +419,68 @@ function showProfilePage() {
     loadProfile();
 }
 
+function showChatView() {
+    currentView = 'chat';
+    const chatView = document.getElementById('chatView');
+    const adminView = document.getElementById('adminView');
+    if (chatView) chatView.style.display = 'flex';
+    if (adminView) adminView.style.display = 'none';
+    updateSidebarState();
+    loadSessions();
+    loadSettings();
+}
+
+function showAdminView() {
+    if (!currentUser || currentUser.role !== 'admin') {
+        showMessageNotice('没有管理员权限', 'error');
+        return;
+    }
+    currentView = 'admin';
+    const chatView = document.getElementById('chatView');
+    const adminView = document.getElementById('adminView');
+    if (chatView) chatView.style.display = 'none';
+    if (adminView) adminView.style.display = 'flex';
+    updateSidebarState();
+    loadAdminDashboard();
+}
+
+function hideAdminView() {
+    const adminView = document.getElementById('adminView');
+    if (adminView) adminView.style.display = 'none';
+}
+
 function clearAuthState() {
     removeToken();
     currentSessionId = null;
     currentSessionHasMessages = false;
+    currentUser = null;
+    adminData = { dashboard: null, users: [], roles: [], permissions: [] };
     showLoginPage();
+}
+
+function updateSidebarState() {
+    const adminBtn = document.getElementById('adminBtn');
+    const backToChatBtn = document.getElementById('backToChatBtn');
+    const profileBtn = document.getElementById('profileBtn');
+    const currentRoleLabel = document.getElementById('currentRoleLabel');
+    const userNameLabel = document.getElementById('sidebarUserName');
+
+    const isAdmin = currentUser && currentUser.role === 'admin';
+    if (adminBtn) {
+        adminBtn.style.display = isAdmin ? 'flex' : 'none';
+    }
+    if (backToChatBtn) {
+        backToChatBtn.style.display = currentView === 'admin' ? 'flex' : 'none';
+    }
+    if (profileBtn) {
+        profileBtn.style.display = currentView === 'admin' ? 'none' : 'flex';
+    }
+    if (currentRoleLabel) {
+        currentRoleLabel.textContent = currentUser ? currentUser.role : '--';
+    }
+    if (userNameLabel) {
+        userNameLabel.textContent = currentUser ? currentUser.username : '--';
+    }
 }
 
 async function apiCall(url, options = {}, requestOptions = {}) {
@@ -446,8 +512,8 @@ async function apiCall(url, options = {}, requestOptions = {}) {
         if (error.name === 'AbortError') {
             return null;
         }
-        console.error('网络请求失败:', error);
-        showMessageNotice('网络请求失败，请检查服务器是否启动', 'error');
+        console.error('缃戠粶璇锋眰澶辫触:', error);
+        showMessageNotice('缃戠粶璇锋眰澶辫触锛岃妫€鏌ユ湇鍔″櫒鏄惁鍚姩', 'error');
         return null;
     }
 }
@@ -479,7 +545,7 @@ async function loadCaptcha() {
             captchaInput.value = '';
         }
     } catch (error) {
-        console.error('加载验证码失败:', error);
+        console.error('鍔犺浇楠岃瘉鐮佸け璐?', error);
         showMessageNotice('验证码加载失败', 'error');
     }
 }
@@ -499,7 +565,7 @@ async function loadSettings() {
             providerSelect.value = data.provider || 'deepseek';
         }
     } catch (error) {
-        console.error('加载设置失败:', error);
+        console.error('鍔犺浇璁剧疆澶辫触:', error);
     }
 }
 
@@ -522,7 +588,7 @@ async function loadProfile() {
             document.getElementById('providerSelect').value = settingsData.provider || 'deepseek';
         }
     } catch (error) {
-        console.error('加载个人信息失败:', error);
+        console.error('鍔犺浇涓汉淇℃伅澶辫触:', error);
     }
 }
 
@@ -533,10 +599,32 @@ function toggleApiKeyVisibility() {
 
     if (input.type === 'password') {
         input.type = 'text';
-        button.textContent = '隐藏';
+        button.textContent = '闅愯棌';
     } else {
         input.type = 'password';
-        button.textContent = '显示';
+        button.textContent = '鏄剧ず';
+    }
+}
+
+async function loadAuthContext() {
+    try {
+        const response = await apiCall('/users/me');
+        if (!response) return;
+
+        const userData = await response.json();
+        if (!response.ok || !userData.success) {
+            return;
+        }
+
+        currentUser = {
+            user_id: userData.user_id,
+            username: userData.username,
+            role: userData.role || 'user',
+            permissions: Array.isArray(userData.permissions) ? userData.permissions : [],
+        };
+        updateSidebarState();
+    } catch (error) {
+        console.error('loadAuthContext failed:', error);
     }
 }
 
@@ -554,8 +642,8 @@ async function saveSettings() {
         const data = await response.json();
         showMessageNotice(data.success ? '设置已保存' : '保存设置失败', data.success ? 'success' : 'error');
     } catch (error) {
-        console.error('保存设置失败:', error);
-        showMessageNotice('保存设置失败', 'error');
+        console.error('淇濆瓨璁剧疆澶辫触:', error);
+        showMessageNotice('淇濆瓨璁剧疆澶辫触', 'error');
     }
 }
 
@@ -578,16 +666,16 @@ async function handleRegister() {
 
         const data = await response.json();
         if (data.success) {
-            showMessageNotice('注册成功，请登录', 'success');
+            showMessageNotice('娉ㄥ唽鎴愬姛锛岃鐧诲綍', 'success');
             document.getElementById('registerUsername').value = '';
             document.getElementById('registerPassword').value = '';
             document.getElementById('loginTab').click();
         } else {
-            showMessageNotice(data.message || '注册失败', 'error');
+            showMessageNotice(data.message || '娉ㄥ唽澶辫触', 'error');
         }
     } catch (error) {
-        console.error('注册失败:', error);
-        showMessageNotice('注册失败，请重试', 'error');
+        console.error('娉ㄥ唽澶辫触:', error);
+        showMessageNotice('娉ㄥ唽澶辫触锛岃閲嶈瘯', 'error');
     } finally {
         setLoadingState(false, 'registerBtn');
     }
@@ -624,14 +712,14 @@ async function handleLogin() {
             document.getElementById('loginPassword').value = '';
             document.getElementById('loginCaptchaCode').value = '';
             showMainPage();
-            showMessageNotice('登录成功', 'success');
+            showMessageNotice('鐧诲綍鎴愬姛', 'success');
         } else {
-            showMessageNotice(data.message || '登录失败', 'error');
+            showMessageNotice(data.message || '鐧诲綍澶辫触', 'error');
             await loadCaptcha();
         }
     } catch (error) {
-        console.error('登录失败:', error);
-        showMessageNotice('登录失败，请重试', 'error');
+        console.error('鐧诲綍澶辫触:', error);
+        showMessageNotice('鐧诲綍澶辫触锛岃閲嶈瘯', 'error');
         await loadCaptcha();
     } finally {
         setLoadingState(false, 'loginBtn');
@@ -671,7 +759,7 @@ function openSessionMenu(triggerBtn, sessionId, titleText, isPinned = false) {
     const pinItem = document.createElement('button');
     pinItem.type = 'button';
     pinItem.className = 'session-menu-item';
-    pinItem.textContent = isPinned ? '取消置顶' : '置顶聊天';
+    pinItem.textContent = isPinned ? '鍙栨秷缃《' : '缃《鑱婂ぉ';
     pinItem.addEventListener('click', (event) => {
         event.stopPropagation();
         closeSessionMenu();
@@ -691,7 +779,7 @@ function openSessionMenu(triggerBtn, sessionId, titleText, isPinned = false) {
     const deleteItem = document.createElement('button');
     deleteItem.type = 'button';
     deleteItem.className = 'session-menu-item danger';
-    deleteItem.textContent = '删除会话';
+    deleteItem.textContent = '鍒犻櫎浼氳瘽';
     deleteItem.addEventListener('click', (event) => {
         event.stopPropagation();
         closeSessionMenu();
@@ -724,15 +812,15 @@ async function toggleSessionPin(sessionId, isPinned) {
 
         const data = await response.json();
         if (!response.ok || !data.success) {
-            showMessageNotice(data.message || '置顶失败', 'error');
+            showMessageNotice(data.message || '缃《澶辫触', 'error');
             return;
         }
 
         await loadSessions();
         showMessageNotice(isPinned ? '已置顶' : '已取消置顶', 'success');
     } catch (error) {
-        console.error('置顶失败:', error);
-        showMessageNotice('置顶失败', 'error');
+        console.error('缃《澶辫触:', error);
+        showMessageNotice('缃《澶辫触', 'error');
     }
 }
 
@@ -829,7 +917,7 @@ function createMessageGroup(role, content, messageId, usage = null) {
     const group = document.createElement('div');
     group.className = `message-group ${role}`;
     group.dataset.messageId = messageId;
-    const isInherited = !!usage?.is_inherited;
+    const isInherited = !!(usage && usage.is_inherited);
 
     const msgDiv = document.createElement('div');
     msgDiv.className = `message ${role}`;
@@ -855,8 +943,8 @@ function createMessageGroup(role, content, messageId, usage = null) {
         const likeBtn = document.createElement('button');
         likeBtn.type = 'button';
         likeBtn.className = 'message-action-btn like-btn';
-        likeBtn.setAttribute('aria-label', '点赞');
-        likeBtn.title = '点赞';
+        likeBtn.setAttribute('aria-label', '鐐硅禐');
+        likeBtn.title = '鐐硅禐';
         likeBtn.innerHTML = '&#128077;';
         likeBtn.addEventListener('click', (event) => {
             event.stopPropagation();
@@ -866,8 +954,8 @@ function createMessageGroup(role, content, messageId, usage = null) {
         const dislikeBtn = document.createElement('button');
         dislikeBtn.type = 'button';
         dislikeBtn.className = 'message-action-btn dislike-btn';
-        dislikeBtn.setAttribute('aria-label', '踩');
-        dislikeBtn.title = '踩';
+        dislikeBtn.setAttribute('aria-label', '点踩');
+        dislikeBtn.title = '点踩';
         dislikeBtn.innerHTML = '&#128078;';
         dislikeBtn.addEventListener('click', (event) => {
             event.stopPropagation();
@@ -877,8 +965,8 @@ function createMessageGroup(role, content, messageId, usage = null) {
         const copyBtn = document.createElement('button');
         copyBtn.type = 'button';
         copyBtn.className = 'message-action-btn copy-btn';
-        copyBtn.setAttribute('aria-label', '复制');
-        copyBtn.title = '复制';
+        copyBtn.setAttribute('aria-label', '澶嶅埗');
+        copyBtn.title = '澶嶅埗';
         copyBtn.innerHTML = '&#128203;';
         copyBtn.addEventListener('click', async (event) => {
             event.stopPropagation();
@@ -893,9 +981,9 @@ function createMessageGroup(role, content, messageId, usage = null) {
     const trigger = document.createElement('button');
     trigger.type = 'button';
     trigger.className = 'message-menu-trigger';
-    trigger.setAttribute('aria-label', '消息操作');
+    trigger.setAttribute('aria-label', '娑堟伅鎿嶄綔');
     trigger.innerHTML = '&#8942;';
-    trigger.title = '更多操作';
+    trigger.title = '鏇村鎿嶄綔';
     trigger.addEventListener('click', (event) => {
         event.stopPropagation();
         openMessageMenu(trigger, messageId, role, content, isInherited);
@@ -920,7 +1008,7 @@ function toggleFeedback(targetBtn, type) {
 
     if (!wasActive) {
         targetBtn.classList.add('active');
-        showMessageNotice(type === 'like' ? '已点赞' : '已踩', 'success');
+        showMessageNotice(type === 'like' ? '已点赞' : '已点踩', 'success');
     }
 }
 
@@ -929,8 +1017,8 @@ async function copyMessageContent(content) {
         await navigator.clipboard.writeText(content);
         showMessageNotice('已复制到剪贴板', 'success');
     } catch (error) {
-        console.error('复制失败:', error);
-        showMessageNotice('复制失败', 'error');
+        console.error('澶嶅埗澶辫触:', error);
+        showMessageNotice('澶嶅埗澶辫触', 'error');
     }
 }
 
@@ -945,7 +1033,7 @@ function openMessageMenu(triggerBtn, messageId, role, content, isInherited = fal
         const modifyItem = document.createElement('button');
         modifyItem.type = 'button';
         modifyItem.className = 'message-menu-item';
-        modifyItem.textContent = '修改消息';
+        modifyItem.textContent = '淇敼娑堟伅';
         modifyItem.addEventListener('click', (event) => {
             event.stopPropagation();
             closeMessageMenu();
@@ -953,7 +1041,7 @@ function openMessageMenu(triggerBtn, messageId, role, content, isInherited = fal
             const input = document.getElementById('messageInput');
             input.value = content;
             input.focus();
-            showMessageNotice('已进入修改该消息状态，发送后将更新原消息，并重新生成回复', 'info');
+            showMessageNotice('宸茶繘鍏ヤ慨鏀硅娑堟伅鐘舵€侊紝鍙戦€佸悗灏嗘洿鏂板師娑堟伅锛屽苟閲嶆柊鐢熸垚鍥炲', 'info');
         });
         menu.appendChild(modifyItem);
 
@@ -989,7 +1077,7 @@ function openMessageMenu(triggerBtn, messageId, role, content, isInherited = fal
         const deleteItem = document.createElement('button');
         deleteItem.type = 'button';
         deleteItem.className = 'message-menu-item danger';
-        deleteItem.textContent = '删除消息';
+        deleteItem.textContent = '鍒犻櫎娑堟伅';
         deleteItem.addEventListener('click', (event) => {
             event.stopPropagation();
             closeMessageMenu();
@@ -1019,11 +1107,11 @@ function openMessageMenu(triggerBtn, messageId, role, content, isInherited = fal
 
 async function deleteMessage(messageId) {
     if (!messageId) {
-        showMessageNotice('无法删除：消息ID缺失', 'error');
+        showMessageNotice('鏃犳硶鍒犻櫎锛氭秷鎭疘D缂哄け', 'error');
         return;
     }
 
-    if (!window.confirm('确定删除这条消息吗？')) {
+    if (!window.confirm('纭畾鍒犻櫎杩欐潯娑堟伅鍚楋紵')) {
         return;
     }
 
@@ -1033,21 +1121,21 @@ async function deleteMessage(messageId) {
 
         const data = await response.json();
         if (!response.ok || !data.success) {
-            showMessageNotice(data.message || '删除消息失败', 'error');
+            showMessageNotice(data.message || '鍒犻櫎娑堟伅澶辫触', 'error');
             return;
         }
 
         showMessageNotice(data.message || '消息已删除', 'success');
         await loadSessionMessages(currentSessionId);
     } catch (error) {
-        console.error('删除消息失败:', error);
-        showMessageNotice('删除消息失败', 'error');
+        console.error('鍒犻櫎娑堟伅澶辫触:', error);
+        showMessageNotice('鍒犻櫎娑堟伅澶辫触', 'error');
     }
 }
 
 async function createMessageBranch(messageId) {
     if (isSendingMessage) {
-        showMessageNotice('消息发送中，请稍后再建立分支', 'error');
+        showMessageNotice('消息发送中，请稍后再创建分支', 'error');
         return;
     }
 
@@ -1060,28 +1148,28 @@ async function createMessageBranch(messageId) {
 
         const data = await response.json();
         if (!response.ok || !data.success) {
-            showMessageNotice(data.message || '建立分支失败', 'error');
+            showMessageNotice(data.message || '寤虹珛鍒嗘敮澶辫触', 'error');
             return;
         }
 
         currentSessionId = data.session_id;
         currentSessionHasMessages = true;
         await loadSessions();
-        showMessageNotice('已在新对话中建立分支', 'success');
+        showMessageNotice('宸插湪鏂板璇濅腑寤虹珛鍒嗘敮', 'success');
     } catch (error) {
-        console.error('建立分支失败:', error);
-        showMessageNotice('建立分支失败', 'error');
+        console.error('寤虹珛鍒嗘敮澶辫触:', error);
+        showMessageNotice('寤虹珛鍒嗘敮澶辫触', 'error');
     }
 }
 
 async function createSessionBranch() {
     if (isSendingMessage) {
-        showMessageNotice('消息发送中，请稍后再建立分支', 'error');
+        showMessageNotice('消息发送中，请稍后再创建分支', 'error');
         return;
     }
 
     if (!currentSessionId) {
-        showMessageNotice('当前没有可分支的会话', 'error');
+        showMessageNotice('褰撳墠娌℃湁鍙垎鏀殑浼氳瘽', 'error');
         return;
     }
 
@@ -1094,24 +1182,24 @@ async function createSessionBranch() {
 
         const data = await response.json();
         if (!response.ok || !data.success) {
-            showMessageNotice(data.message || '建立分支对话失败', 'error');
+            showMessageNotice(data.message || '寤虹珛鍒嗘敮瀵硅瘽澶辫触', 'error');
             return;
         }
 
         currentSessionId = data.session_id;
         currentSessionHasMessages = true;
         await loadSessions();
-        showMessageNotice('已在新分支中新建对话', 'success');
+        showMessageNotice('宸插湪鏂板垎鏀腑鏂板缓瀵硅瘽', 'success');
     } catch (error) {
-        console.error('建立分支对话失败:', error);
-        showMessageNotice('建立分支对话失败', 'error');
+        console.error('寤虹珛鍒嗘敮瀵硅瘽澶辫触:', error);
+        showMessageNotice('寤虹珛鍒嗘敮瀵硅瘽澶辫触', 'error');
     }
 }
 
 function createSessionItem(session) {
     const sessionId = Number(session.session_id);
     const title = session.title || '新会话';
-    const lastMessage = session.last_message || '暂无消息';
+    const lastMessage = session.last_message || '鏆傛棤娑堟伅';
     const isPinned = !!session.is_pinned;
     const sessionItem = document.createElement('div');
     sessionItem.className = 'session-item';
@@ -1140,9 +1228,9 @@ function createSessionItem(session) {
     const menuTrigger = document.createElement('button');
     menuTrigger.type = 'button';
     menuTrigger.className = 'session-menu-trigger';
-    menuTrigger.setAttribute('aria-label', '会话操作');
+    menuTrigger.setAttribute('aria-label', '浼氳瘽鎿嶄綔');
     menuTrigger.innerHTML = '&#8942;';
-    menuTrigger.title = '更多操作';
+    menuTrigger.title = '鏇村鎿嶄綔';
     menuTrigger.addEventListener('click', (event) => {
         event.stopPropagation();
         openSessionMenu(menuTrigger, sessionId, titleElement.textContent, isPinned);
@@ -1176,7 +1264,7 @@ function renderActiveSessionStub(sessionId, title = '新会话') {
     const sessionItem = createSessionItem({
         session_id: sessionId,
         title,
-        last_message: '暂无消息'
+        last_message: '鏆傛棤娑堟伅'
     });
     sessionList.prepend(sessionItem);
 }
@@ -1197,7 +1285,7 @@ async function deleteEmptyCurrentSession(nextSessionId = null) {
             await response.json().catch(() => null);
         }
     } catch (error) {
-        console.error('自动删除空会话失败:', error);
+        console.error('鑷姩鍒犻櫎绌轰細璇濆け璐?', error);
     }
 
     const sessionItem = document.querySelector(`.session-item[data-session-id="${sessionId}"]`);
@@ -1238,12 +1326,12 @@ function openRenameSessionModal(sessionId, currentTitle) {
     const cancelBtn = document.createElement('button');
     cancelBtn.type = 'button';
     cancelBtn.className = 'modal-btn ghost';
-    cancelBtn.textContent = '取消';
+    cancelBtn.textContent = '鍙栨秷';
 
     const saveBtn = document.createElement('button');
     saveBtn.type = 'button';
     saveBtn.className = 'modal-btn primary';
-    saveBtn.textContent = '保存';
+    saveBtn.textContent = '淇濆瓨';
 
     actions.appendChild(cancelBtn);
     actions.appendChild(saveBtn);
@@ -1274,7 +1362,7 @@ function openRenameSessionModal(sessionId, currentTitle) {
     saveBtn.addEventListener('click', async () => {
         const newTitle = input.value.trim();
         if (!newTitle) {
-            showMessageNotice('会话名称不能为空', 'error');
+            showMessageNotice('浼氳瘽鍚嶇О涓嶈兘涓虹┖', 'error');
             input.focus();
             return;
         }
@@ -1285,7 +1373,7 @@ function openRenameSessionModal(sessionId, currentTitle) {
 
         saveBtn.disabled = true;
         cancelBtn.disabled = true;
-        saveBtn.textContent = '保存中...';
+        saveBtn.textContent = '淇濆瓨涓?..';
 
         try {
             const response = await apiCall(`/chat/sessions/${sessionId}`, {
@@ -1295,16 +1383,16 @@ function openRenameSessionModal(sessionId, currentTitle) {
             if (!response) {
                 saveBtn.disabled = false;
                 cancelBtn.disabled = false;
-                saveBtn.textContent = '保存';
+                saveBtn.textContent = '淇濆瓨';
                 return;
             }
 
             const data = await response.json();
             if (!response.ok || !data.success) {
-                showMessageNotice(data.message || '修改会话名称失败', 'error');
+                showMessageNotice(data.message || '淇敼浼氳瘽鍚嶇О澶辫触', 'error');
                 saveBtn.disabled = false;
                 cancelBtn.disabled = false;
-                saveBtn.textContent = '保存';
+                saveBtn.textContent = '淇濆瓨';
                 return;
             }
 
@@ -1315,11 +1403,11 @@ function openRenameSessionModal(sessionId, currentTitle) {
             closeRenameSessionModal();
             showMessageNotice('会话名称已更新', 'success');
         } catch (error) {
-            console.error('修改会话名称失败:', error);
-            showMessageNotice('修改会话名称失败', 'error');
+            console.error('淇敼浼氳瘽鍚嶇О澶辫触:', error);
+            showMessageNotice('淇敼浼氳瘽鍚嶇О澶辫触', 'error');
             saveBtn.disabled = false;
             cancelBtn.disabled = false;
-            saveBtn.textContent = '保存';
+            saveBtn.textContent = '淇濆瓨';
         }
     });
 }
@@ -1342,7 +1430,7 @@ async function deleteSession(sessionId) {
 
         const data = await response.json();
         if (!response.ok || !data.success) {
-            showMessageNotice(data.message || '删除会话失败', 'error');
+            showMessageNotice(data.message || '鍒犻櫎浼氳瘽澶辫触', 'error');
             return;
         }
 
@@ -1354,8 +1442,8 @@ async function deleteSession(sessionId) {
         await loadSessions();
         showMessageNotice(data.message || '会话已删除', 'success');
     } catch (error) {
-        console.error('删除会话失败:', error);
-        showMessageNotice('删除会话失败', 'error');
+        console.error('鍒犻櫎浼氳瘽澶辫触:', error);
+        showMessageNotice('鍒犻櫎浼氳瘽澶辫触', 'error');
     }
 }
 
@@ -1382,12 +1470,12 @@ async function loadSessions() {
         } else {
             currentSessionId = null;
             currentSessionHasMessages = false;
-            sessionList.innerHTML = '<div class="empty-sessions">暂无会话</div>';
+            sessionList.innerHTML = '<div class="empty-sessions">鏆傛棤浼氳瘽</div>';
             renderEmptyChat();
         }
     } catch (error) {
-        console.error('加载会话失败:', error);
-        showMessageNotice('加载会话失败', 'error');
+        console.error('鍔犺浇浼氳瘽澶辫触:', error);
+        showMessageNotice('鍔犺浇浼氳瘽澶辫触', 'error');
     }
 }
 
@@ -1415,8 +1503,8 @@ async function createNewSession() {
             renderActiveSessionStub(data.session_id);
         }
     } catch (error) {
-        console.error('创建会话失败:', error);
-        showMessageNotice('创建会话失败', 'error');
+        console.error('鍒涘缓浼氳瘽澶辫触:', error);
+        showMessageNotice('鍒涘缓浼氳瘽澶辫触', 'error');
     }
 }
 
@@ -1443,7 +1531,7 @@ async function loadSessionMessages(sessionId) {
 
         const data = await response.json();
         if (!response.ok || !data.success) {
-            showMessageNotice(data.message || '加载消息失败', 'error');
+            showMessageNotice(data.message || '鍔犺浇娑堟伅澶辫触', 'error');
             currentSessionId = null;
             currentSessionHasMessages = false;
             await loadSessions();
@@ -1467,7 +1555,7 @@ async function loadSessionMessages(sessionId) {
 
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
     } catch (error) {
-        console.error('加载消息失败:', error);
+        console.error('鍔犺浇娑堟伅澶辫触:', error);
     }
 }
 
@@ -1534,7 +1622,7 @@ async function consumeChatStream(response, aiMsgDiv, aiGroup) {
         } else if (type === 'error') {
             hasError = true;
             renderVersion += 1;
-            aiMsgDiv.textContent = payload.message || payload.content || '请求失败，请稍后再试';
+            aiMsgDiv.textContent = payload.message || payload.content || '璇锋眰澶辫触锛岃绋嶅悗鍐嶈瘯';
         }
 
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
@@ -1587,10 +1675,10 @@ async function stopGeneration() {
 
     try {
         await apiCall(`/chat/stream/${sessionId}/stop`, { method: 'POST' });
-        showMessageNotice('已停止生成，正在收尾...', 'info');
+        showMessageNotice('宸插仠姝㈢敓鎴愶紝姝ｅ湪鏀跺熬...', 'info');
     } catch (error) {
         if (error.name !== 'AbortError') {
-            console.error('停止生成失败:', error);
+            console.error('鍋滄鐢熸垚澶辫触:', error);
         }
         if (currentAbortController) {
             currentAbortController.abort();
@@ -1643,7 +1731,7 @@ async function sendMessage() {
 
     const aiMsgDiv = document.createElement('div');
     aiMsgDiv.className = 'message assistant';
-    aiMsgDiv.textContent = '正在思考...';
+    aiMsgDiv.textContent = '姝ｅ湪鎬濊€?..';
     aiGroup.appendChild(aiMsgDiv);
     messagesContainer.appendChild(aiGroup);
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
@@ -1664,12 +1752,12 @@ async function sendMessage() {
             if (!currentAbortController || currentAbortController.signal.aborted) {
                 return;
             }
-            aiMsgDiv.textContent = '请求失败，请稍后再试';
+            aiMsgDiv.textContent = '璇锋眰澶辫触锛岃绋嶅悗鍐嶈瘯';
             return;
         }
 
         if (!response.body) {
-            aiMsgDiv.textContent = '响应异常，请稍后再试';
+            aiMsgDiv.textContent = '鍝嶅簲寮傚父锛岃绋嶅悗鍐嶈瘯';
             return;
         }
 
@@ -1681,7 +1769,7 @@ async function sendMessage() {
         if (error.name === 'AbortError') {
             return;
         }
-        console.error('发送消息失败:', error);
+        console.error('鍙戦€佹秷鎭け璐?', error);
         aiMsgDiv.textContent = '发送消息失败，请稍后再试';
     } finally {
         currentAbortController = null;
@@ -1718,7 +1806,7 @@ async function modifyMessageStream(messageId, newContent) {
 
     const aiMsgDiv = document.createElement('div');
     aiMsgDiv.className = 'message assistant';
-    aiMsgDiv.textContent = '正在修改并重新生成回复...';
+    aiMsgDiv.textContent = '姝ｅ湪淇敼骞堕噸鏂扮敓鎴愬洖澶?..';
     aiGroup.appendChild(aiMsgDiv);
     messagesContainer.appendChild(aiGroup);
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
@@ -1743,34 +1831,315 @@ async function modifyMessageStream(messageId, newContent) {
 
         if (!response.ok) {
             const errorText = await response.text().catch(() => '');
-            aiMsgDiv.textContent = errorText || '修改消息失败';
-            showMessageNotice('修改消息失败', 'error');
+            aiMsgDiv.textContent = errorText || '淇敼娑堟伅澶辫触';
+            showMessageNotice('淇敼娑堟伅澶辫触', 'error');
             return;
         }
 
         if (!response.body) {
-            aiMsgDiv.textContent = '响应异常，请稍后再试';
-            showMessageNotice('修改消息失败', 'error');
+            aiMsgDiv.textContent = '鍝嶅簲寮傚父锛岃绋嶅悗鍐嶈瘯';
+            showMessageNotice('淇敼娑堟伅澶辫触', 'error');
             return;
         }
 
         await consumeChatStream(response, aiMsgDiv, aiGroup);
 
         currentSessionHasMessages = true;
-        showMessageNotice('修改成功', 'success');
+        showMessageNotice('淇敼鎴愬姛', 'success');
         await loadSessions();
     } catch (error) {
         if (error.name === 'AbortError') {
             return;
         }
-        console.error('修改消息失败:', error);
-        aiMsgDiv.textContent = '修改消息失败';
-        showMessageNotice('修改消息失败', 'error');
+        console.error('淇敼娑堟伅澶辫触:', error);
+        aiMsgDiv.textContent = '淇敼娑堟伅澶辫触';
+        showMessageNotice('淇敼娑堟伅澶辫触', 'error');
     } finally {
         currentAbortController = null;
         isStopping = false;
         isSendingMessage = false;
         setLoadingState(false);
+    }
+}
+
+function showAdminNotice(message, type = 'info') {
+    const notice = document.getElementById('adminNotice');
+    if (!notice) return;
+    notice.textContent = message;
+    notice.className = `notice ${type}`;
+}
+
+function clearAdminNotice() {
+    showAdminNotice('', 'info');
+}
+
+function getSelectedRoleId() {
+    const select = document.getElementById('rolePermissionSelect');
+    return select ? Number(select.value) : 0;
+}
+
+function renderAdminStats() {
+    const dashboard = adminData.dashboard || {};
+    const stats = [
+        { id: 'adminStatUsers', value: dashboard.users != null ? dashboard.users : adminData.users.length },
+        { id: 'adminStatRoles', value: dashboard.roles != null ? dashboard.roles : adminData.roles.length },
+        { id: 'adminStatPermissions', value: dashboard.permissions != null ? dashboard.permissions : adminData.permissions.length },
+        { id: 'adminStatAdmins', value: dashboard.admin_users != null ? dashboard.admin_users : 0 },
+    ];
+    stats.forEach(({ id, value }) => {
+        const node = document.getElementById(id);
+        if (node) node.textContent = String(value);
+    });
+}
+
+function renderRoleSelectOptions() {
+    const select = document.getElementById('rolePermissionSelect');
+    if (!select) return;
+    const current = select.value;
+    select.innerHTML = adminData.roles.map((role) => (
+        `<option value="${role.role_id}">${role.name}</option>`
+    )).join('');
+    if (current) {
+        select.value = current;
+    }
+}
+
+function renderPermissionChecklist(selectedCodes = []) {
+    const container = document.getElementById('rolePermissionChecklist');
+    if (!container) return;
+    const selected = new Set(selectedCodes);
+    container.innerHTML = adminData.permissions.map((permission) => `
+        <label class="check-row">
+            <input type="checkbox" value="${permission.code}" ${selected.has(permission.code) ? 'checked' : ''}>
+            <span>
+                <strong>${permission.code}</strong>
+                <em>${permission.name}</em>
+            </span>
+        </label>
+    `).join('');
+}
+
+function renderAdminUsers() {
+    const tbody = document.getElementById('adminUsersBody');
+    if (!tbody) return;
+    const roles = adminData.roles || [];
+    tbody.innerHTML = adminData.users.map((user) => {
+        const roleOptions = roles.map((role) => (
+            `<option value="${role.role_id}" ${role.name === user.role ? 'selected' : ''}>${role.name}</option>`
+        )).join('');
+        const permissionText = (user.permissions || []).join(', ') || '--';
+        return `
+            <tr data-user-id="${user.user_id}">
+                <td>${user.username}</td>
+                <td>${user.role}</td>
+                <td>${permissionText}</td>
+                <td>
+                    <select class="inline-select user-role-select">
+                        ${roleOptions}
+                    </select>
+                </td>
+                <td>
+                    <button type="button" class="secondary-action user-role-save">淇濆瓨</button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    tbody.querySelectorAll('.user-role-save').forEach((button) => {
+        button.addEventListener('click', async () => {
+            const row = button.closest('tr');
+            if (!row) return;
+            const userId = Number(row.dataset.userId);
+            const roleSelect = row.querySelector('.user-role-select');
+            if (!roleSelect) return;
+            await updateUserRole(userId, Number(roleSelect.value));
+        });
+    });
+}
+
+function renderAdminRoles() {
+    const tbody = document.getElementById('adminRolesBody');
+    if (!tbody) return;
+    tbody.innerHTML = adminData.roles.map((role) => `
+        <tr data-role-id="${role.role_id}">
+            <td>${role.name}</td>
+            <td>${role.description || '--'}</td>
+            <td>${(role.permissions || []).map((item) => item.code || item).join(', ') || '--'}</td>
+            <td>
+                <button type="button" class="secondary-action role-edit-btn">缂栬緫鏉冮檺</button>
+            </td>
+        </tr>
+    `).join('');
+
+    tbody.querySelectorAll('.role-edit-btn').forEach((button) => {
+        button.addEventListener('click', () => {
+            const row = button.closest('tr');
+            if (!row) return;
+            const roleId = Number(row.dataset.roleId);
+            selectRoleForEdit(roleId);
+        });
+    });
+}
+
+function renderAdminPermissions() {
+    const tbody = document.getElementById('adminPermissionsBody');
+    if (!tbody) return;
+    tbody.innerHTML = adminData.permissions.map((permission) => `
+        <tr>
+            <td>${permission.code}</td>
+            <td>${permission.name}</td>
+            <td>${permission.description || '--'}</td>
+        </tr>
+    `).join('');
+}
+
+function populateRoleForm(roleId) {
+    const role = adminData.roles.find((item) => Number(item.role_id) === Number(roleId));
+    const title = document.getElementById('roleEditorTitle');
+    const name = document.getElementById('roleNamePreview');
+    if (!role) return;
+    if (title) title.textContent = `瑙掕壊鏉冮檺 - ${role.name}`;
+    if (name) name.textContent = role.name;
+    const selectedCodes = (role.permissions || []).map((item) => item.code || item);
+    renderPermissionChecklist(selectedCodes);
+    const select = document.getElementById('rolePermissionSelect');
+    if (select) select.value = String(role.role_id);
+    var rolePermissionSaveBtn = document.getElementById('rolePermissionSaveBtn');
+    if (rolePermissionSaveBtn) {
+        rolePermissionSaveBtn.setAttribute('data-role-id', String(role.role_id));
+    }
+}
+
+function selectRoleForEdit(roleId) {
+    populateRoleForm(roleId);
+}
+
+async function loadAdminDashboard() {
+    if (!currentUser || currentUser.role !== 'admin') {
+        return;
+    }
+
+    clearAdminNotice();
+    try {
+        const [dashboardRes, usersRes, rolesRes, permissionsRes] = await Promise.all([
+            apiCall('/admin/dashboard'),
+            apiCall('/admin/users'),
+            apiCall('/admin/roles'),
+            apiCall('/admin/permissions'),
+        ]);
+
+        const dashboard = dashboardRes ? await dashboardRes.json() : null;
+        const users = usersRes ? await usersRes.json() : [];
+        const roles = rolesRes ? await rolesRes.json() : [];
+        const permissions = permissionsRes ? await permissionsRes.json() : [];
+
+        adminData = {
+            dashboard: dashboard && dashboard.success ? dashboard.summary : null,
+            users: Array.isArray(users) ? users : [],
+            roles: Array.isArray(roles) ? roles : [],
+            permissions: Array.isArray(permissions) ? permissions : [],
+        };
+
+        renderAdminStats();
+        renderRoleSelectOptions();
+        renderAdminUsers();
+        renderAdminRoles();
+        renderAdminPermissions();
+
+        const initialRoleId = adminData.roles[0] ? adminData.roles[0].role_id : 0;
+        if (initialRoleId) {
+            populateRoleForm(initialRoleId);
+        }
+    } catch (error) {
+        console.error('loadAdminDashboard failed:', error);
+        showAdminNotice('加载管理员数据失败', 'error');
+    }
+}
+
+async function updateUserRole(userId, roleId) {
+    try {
+        const response = await apiCall(`/admin/users/${userId}/role`, {
+            method: 'PATCH',
+            body: JSON.stringify({ role_id: roleId }),
+        });
+        if (!response) return;
+
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            showAdminNotice(data.message || '鏇存柊鐢ㄦ埛瑙掕壊澶辫触', 'error');
+            return;
+        }
+
+        showAdminNotice('用户角色已更新', 'success');
+        await loadAdminDashboard();
+    } catch (error) {
+        console.error('updateUserRole failed:', error);
+        showAdminNotice('鏇存柊鐢ㄦ埛瑙掕壊澶辫触', 'error');
+    }
+}
+
+async function saveSelectedRolePermissions() {
+    const roleId = getSelectedRoleId();
+    if (!roleId) {
+        showAdminNotice('请先选择一个角色', 'error');
+        return;
+    }
+
+    const checkboxes = Array.from(document.querySelectorAll('#rolePermissionChecklist input[type="checkbox"]'));
+    const permissionCodes = checkboxes.filter((item) => item.checked).map((item) => item.value);
+
+    try {
+        const response = await apiCall(`/admin/roles/${roleId}/permissions`, {
+            method: 'PUT',
+            body: JSON.stringify({ permission_codes: permissionCodes }),
+        });
+        if (!response) return;
+
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            showAdminNotice(data.message || '鏇存柊瑙掕壊鏉冮檺澶辫触', 'error');
+            return;
+        }
+
+        showAdminNotice('角色权限已更新', 'success');
+        await loadAdminDashboard();
+    } catch (error) {
+        console.error('saveSelectedRolePermissions failed:', error);
+        showAdminNotice('鏇存柊瑙掕壊鏉冮檺澶辫触', 'error');
+    }
+}
+
+async function createNewRole() {
+    const nameInput = document.getElementById('roleNameInput');
+    const descriptionInput = document.getElementById('roleDescriptionInput');
+    const name = nameInput ? nameInput.value.trim() : '';
+    const description = descriptionInput ? descriptionInput.value.trim() : '';
+
+    if (!name) {
+        showAdminNotice('请输入角色名称', 'error');
+        return;
+    }
+
+    try {
+        const response = await apiCall('/admin/roles', {
+            method: 'POST',
+            body: JSON.stringify({ name, description: description || null }),
+        });
+        if (!response) return;
+
+        const data = await response.json();
+        if (!response.ok || !data.role_id) {
+            showAdminNotice(data.message || '鍒涘缓瑙掕壊澶辫触', 'error');
+            return;
+        }
+
+        if (nameInput) nameInput.value = '';
+        showAdminNotice('角色已创建', 'success');
+        await loadAdminDashboard();
+        populateRoleForm(data.role_id);
+    } catch (error) {
+        console.error('createNewRole failed:', error);
+        showAdminNotice('鍒涘缓瑙掕壊澶辫触', 'error');
     }
 }
 
@@ -1813,6 +2182,32 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('profileBtn').addEventListener('click', showProfilePage);
     document.getElementById('backBtn').addEventListener('click', showMainPage);
     document.getElementById('toggleApiKeyBtn').addEventListener('click', toggleApiKeyVisibility);
+    const adminBtn = document.getElementById('adminBtn');
+    if (adminBtn) {
+        adminBtn.addEventListener('click', showAdminView);
+    }
+    const backToChatBtn = document.getElementById('backToChatBtn');
+    if (backToChatBtn) {
+        backToChatBtn.addEventListener('click', showChatView);
+    }
+    const refreshAdminBtn = document.getElementById('refreshAdminBtn');
+    if (refreshAdminBtn) {
+        refreshAdminBtn.addEventListener('click', loadAdminDashboard);
+    }
+    const createRoleBtn = document.getElementById('createRoleBtn');
+    if (createRoleBtn) {
+        createRoleBtn.addEventListener('click', createNewRole);
+    }
+    const saveRolePermissionsBtn = document.getElementById('rolePermissionSaveBtn');
+    if (saveRolePermissionsBtn) {
+        saveRolePermissionsBtn.addEventListener('click', saveSelectedRolePermissions);
+    }
+    const rolePermissionSelect = document.getElementById('rolePermissionSelect');
+    if (rolePermissionSelect) {
+        rolePermissionSelect.addEventListener('change', (event) => {
+            selectRoleForEdit(Number(event.target.value));
+        });
+    }
 
     document.querySelectorAll('.theme-btn').forEach((btn) => {
         btn.addEventListener('click', () => setTheme(btn.dataset.theme));
@@ -1824,4 +2219,16 @@ document.addEventListener('DOMContentLoaded', () => {
             sendMessage();
         }
     });
+
+    updateSidebarState();
 });
+
+
+
+
+
+
+
+
+
+

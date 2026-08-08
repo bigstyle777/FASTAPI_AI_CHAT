@@ -1,6 +1,5 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -11,19 +10,16 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
 </head>
-
 <body>
     <div id="loginPage" class="login-page">
         <div class="login-card">
             <div class="brand-mark">AI</div>
             <h1>AI Chat Pro</h1>
-            <p class="login-subtitle">登录后继续你的智能对话工作台</p>
-
+            <p class="login-subtitle">登录后继续你的对话工作台</p>
             <div class="tabs" role="tablist">
                 <button id="loginTab" class="tab active" type="button">登录</button>
                 <button id="registerTab" class="tab" type="button">注册</button>
             </div>
-
             <form id="loginForm">
                 <div class="form-group">
                     <label for="loginUsername">用户名</label>
@@ -44,8 +40,7 @@
                 </div>
                 <button id="loginBtn" class="primary-action" type="button">登录</button>
             </form>
-
-            <form id="registerForm" style="display: none;">
+            <form id="registerForm" style="display:none;">
                 <div class="form-group">
                     <label for="registerUsername">用户名</label>
                     <input id="registerUsername" type="text" placeholder="请输入用户名" autocomplete="username">
@@ -71,21 +66,25 @@
                 </div>
                 <button id="newChatBtn" type="button">新建聊天</button>
             </div>
-
             <div id="sessionList" aria-label="会话列表"></div>
-
             <div class="sidebar-footer">
                 <div class="theme-switcher" role="group" aria-label="主题切换">
                     <button id="themeLightBtn" class="theme-btn" type="button" data-theme="light">浅色</button>
                     <button id="themeDarkBtn" class="theme-btn" type="button" data-theme="dark">深色</button>
                     <button id="themeSystemBtn" class="theme-btn" type="button" data-theme="system">系统</button>
                 </div>
+                <button id="adminBtn" class="ghost-btn" type="button" style="display:none;">管理员中心</button>
+                <button id="backToChatBtn" class="ghost-btn" type="button" style="display:none;">返回聊天</button>
                 <button id="profileBtn" class="ghost-btn" type="button">个人中心</button>
                 <button id="logoutBtn" class="ghost-btn danger" type="button">退出登录</button>
+                <div class="sidebar-meta">
+                    <span id="sidebarUserName">--</span>
+                    <span id="currentRoleLabel">--</span>
+                </div>
             </div>
         </aside>
 
-        <main class="chat">
+        <main id="chatView" class="chat">
             <header class="chat-header">
                 <div>
                     <h1>AI Assistant</h1>
@@ -93,40 +92,123 @@
                 </div>
                 <span class="status-pill">在线</span>
             </header>
-
             <div id="messageNotice" class="notice"></div>
             <div id="messages">
                 <div class="empty-state">
                     <div class="empty-icon">AI</div>
-                    <h2>开始一次新的对话</h2>
-                    <p>选择左侧会话，或新建聊天后输入你的问题。</p>
+                    <h2>开始一段新的对话</h2>
+                    <p>选择左侧会话，或者新建聊天后输入你的问题。</p>
                 </div>
             </div>
-
             <div class="input-area">
                 <input id="messageInput" type="text" placeholder="输入消息，按 Enter 发送">
                 <button id="sendBtn" type="button" aria-label="发送消息">发送</button>
             </div>
         </main>
-    </div>
 
-    <div id="profilePage" class="profile-page" style="display: none;">
-        <div class="profile-container">
-            <button id="backBtn" class="back-btn" type="button">返回</button>
-            <h1>个人中心</h1>
-
-            <section class="profile-section">
-                <h2>用户信息</h2>
-                <div class="info-row">
-                    <label>用户名</label>
-                    <span id="profileUsername">--</span>
+        <section id="adminView" class="admin-view" style="display:none;">
+            <header class="admin-header">
+                <div>
+                    <h1>管理员中心</h1>
+                    <p>用户、角色、权限统一管理</p>
                 </div>
-                <div class="info-row">
-                    <label>用户 ID</label>
-                    <span id="profileUserId">--</span>
+                <div class="admin-actions">
+                    <button id="refreshAdminBtn" class="secondary-action" type="button">刷新</button>
+                    <button id="createRoleBtn" class="secondary-action" type="button">新增角色</button>
+                </div>
+            </header>
+
+            <div id="adminNotice" class="notice"></div>
+
+            <div class="admin-stats">
+                <div class="stat-box"><span class="stat-label">用户</span><strong id="adminStatUsers">0</strong></div>
+                <div class="stat-box"><span class="stat-label">角色</span><strong id="adminStatRoles">0</strong></div>
+                <div class="stat-box"><span class="stat-label">权限</span><strong id="adminStatPermissions">0</strong></div>
+                <div class="stat-box"><span class="stat-label">管理员</span><strong id="adminStatAdmins">0</strong></div>
+            </div>
+
+            <div class="admin-grid">
+                <section class="admin-panel">
+                    <div class="panel-head"><h2>用户列表</h2></div>
+                    <div class="table-wrap">
+                        <table class="admin-table">
+                            <thead>
+                                <tr>
+                                    <th>用户名</th>
+                                    <th>角色</th>
+                                    <th>权限</th>
+                                    <th>修改角色</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="adminUsersBody"></tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <section class="admin-panel">
+                    <div class="panel-head"><h2 id="roleEditorTitle">角色权限</h2></div>
+                    <div class="admin-form">
+                        <label class="field-label" for="roleNameInput">新增角色</label>
+                        <input id="roleNameInput" class="admin-input" type="text" placeholder="输入角色名称">
+                        <textarea id="roleDescriptionInput" class="admin-textarea" rows="2" placeholder="角色描述"></textarea>
+                    </div>
+                    <div class="role-editor">
+                        <div class="role-select-row">
+                            <label class="field-label" for="rolePermissionSelect">编辑已有角色</label>
+                            <select id="rolePermissionSelect" class="admin-select"></select>
+                        </div>
+                        <div id="rolePermissionChecklist" class="permission-checklist"></div>
+                        <button id="rolePermissionSaveBtn" class="primary-action" type="button">保存权限</button>
+                    </div>
+                </section>
+            </div>
+
+            <section class="admin-panel">
+                <div class="panel-head"><h2>权限字典</h2></div>
+                <div class="table-wrap">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>权限码</th>
+                                <th>名称</th>
+                                <th>说明</th>
+                            </tr>
+                        </thead>
+                        <tbody id="adminPermissionsBody"></tbody>
+                    </table>
                 </div>
             </section>
 
+            <section class="admin-panel">
+                <div class="panel-head"><h2>角色概览</h2></div>
+                <div class="table-wrap">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>角色</th>
+                                <th>描述</th>
+                                <th>权限</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="adminRolesBody"></tbody>
+                    </table>
+                </div>
+            </section>
+        </section>
+    </div>
+
+    <div id="profilePage" class="profile-page" style="display:none;">
+        <div class="profile-container">
+            <button id="backBtn" class="back-btn" type="button">返回</button>
+            <h1>个人中心</h1>
+            <section class="profile-section">
+                <h2>用户信息</h2>
+                <div class="info-row"><label>用户名</label><span id="profileUsername">--</span></div>
+                <div class="info-row"><label>用户 ID</label><span id="profileUserId">--</span></div>
+                <div class="info-row"><label>角色</label><span id="profileRole">--</span></div>
+            </section>
             <section class="profile-section">
                 <h2>API 设置</h2>
                 <div class="form-group api-key-row">
@@ -158,7 +240,7 @@
                     ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
                     : theme;
                 document.documentElement.setAttribute('data-theme', resolved);
-            } catch (e) { }
+            } catch (e) {}
         })();
     </script>
     <script src="https://cdn.jsdelivr.net/npm/markdown-it@13.0.2/dist/markdown-it.min.js"></script>
@@ -168,5 +250,4 @@
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js"></script>
     <script src="app.js"></script>
 </body>
-
 </html>

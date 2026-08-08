@@ -3,7 +3,7 @@ from datetime import datetime
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from .models import ChatSession, Message, User, UserSetting
+from .models import ChatSession, Message, Permission, Role, RolePermission, User, UserSetting
 
 
 def get_user_by_username(db, username):
@@ -16,12 +16,87 @@ def get_user_by_id(db, user_id):
     return db.execute(stmt).scalar_one_or_none()
 
 
-def create_user(db, username, password):
-    user = User(username=username, password=password)
+def create_user(db, username, password, role_id):
+    user = User(username=username, password=password, role_id=role_id)
     db.add(user)
     db.commit()
     db.refresh(user)
     return user
+
+
+def get_role_by_name(db, role_name):
+    stmt = select(Role).where(Role.name == role_name)
+    return db.execute(stmt).scalar_one_or_none()
+
+
+def get_role_by_id(db, role_id):
+    stmt = select(Role).where(Role.id == role_id)
+    return db.execute(stmt).scalar_one_or_none()
+
+
+def get_roles(db):
+    stmt = select(Role).order_by(Role.id.asc())
+    return db.execute(stmt).scalars().all()
+
+
+def create_role(db, name, description=None, is_system=False):
+    role = Role(name=name, description=description, is_system=is_system)
+    db.add(role)
+    db.commit()
+    db.refresh(role)
+    return role
+
+
+def get_permission_by_code(db, code):
+    stmt = select(Permission).where(Permission.code == code)
+    return db.execute(stmt).scalar_one_or_none()
+
+
+def get_permission_by_id(db, permission_id):
+    stmt = select(Permission).where(Permission.id == permission_id)
+    return db.execute(stmt).scalar_one_or_none()
+
+
+def get_permissions(db):
+    stmt = select(Permission).order_by(Permission.id.asc())
+    return db.execute(stmt).scalars().all()
+
+
+def create_permission(db, code, name, description=None):
+    permission = Permission(code=code, name=name, description=description)
+    db.add(permission)
+    db.commit()
+    db.refresh(permission)
+    return permission
+
+
+def add_permission_to_role(db, role_id, permission_id):
+    stmt = select(RolePermission).where(
+        RolePermission.role_id == role_id,
+        RolePermission.permission_id == permission_id,
+    )
+    existing = db.execute(stmt).scalar_one_or_none()
+    if existing:
+        return existing
+
+    link = RolePermission(role_id=role_id, permission_id=permission_id)
+    db.add(link)
+    db.commit()
+    return link
+
+
+def replace_role_permissions(db, role_id, permission_ids):
+    db.execute(
+        RolePermission.__table__.delete().where(RolePermission.role_id == role_id)
+    )
+    for permission_id in permission_ids:
+        db.add(RolePermission(role_id=role_id, permission_id=permission_id))
+    db.commit()
+
+
+def get_users_with_roles(db):
+    stmt = select(User).order_by(User.id.asc())
+    return db.execute(stmt).scalars().all()
 
 
 def create_session(

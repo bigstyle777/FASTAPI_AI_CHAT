@@ -17,6 +17,7 @@ from ..schemas import (
     StreamUsageEvent,
     TokenUsage,
 )
+from ..rag.service import augment_messages_with_rag
 from .cache import (
     check_rate_limit,
     clear_generation_status,
@@ -78,6 +79,7 @@ def send_message_service(db, user, request):
 
     history = load_visible_messages(db, request.session_id)
     messages = [{"role": item.role, "content": item.content} for item in history]
+    messages = augment_messages_with_rag(db, user["user_id"], message, messages)
     ai_reply = chat_with_ai(messages=messages, user_id=user["user_id"], db=db)
 
     create_message(db, request.session_id, "assistant", ai_reply, parent_id=user_message.id)
@@ -112,7 +114,14 @@ def stop_generation_service(session_id, user):
     set_generation_status(session_id, "stop_requested")
 
 
-def stream_ai_reply(db, user_id, session_id, messages, parent_id=None):
+def stream_ai_reply(
+    db,
+    user_id,
+    session_id,
+    messages,
+    parent_id=None,
+    history_messages=None,
+):
     clear_generation_status(session_id)
     ai_reply = ""
     usage = TokenUsage()
@@ -142,13 +151,14 @@ def stream_ai_reply(db, user_id, session_id, messages, parent_id=None):
         parent_id=parent_id,
     )
     update_session(db, session_id, ai_reply)
-    messages.append(
+    saved_messages = history_messages if history_messages is not None else messages
+    saved_messages.append(
         {
             "role": "assistant",
             "content": ai_reply,
         }
     )
-    save_chat_context(session_id, messages)
+    save_chat_context(session_id, saved_messages)
     yield sse_event("usage", StreamUsageEvent(usage=usage))
     yield sse_event("done", StreamDoneEvent())
     clear_generation_status(session_id)
@@ -173,9 +183,15 @@ def modify_message_services(db, user, message_id, new_content):
 
     history = get_messages_by_session(db, message.session_id)
     messages = [{"role": item.role, "content": item.content} for item in history]
+    messages = augment_messages_with_rag(db, user["user_id"], new_content, messages)
 
     yield from stream_ai_reply(
-        db, user["user_id"], message.session_id, messages, parent_id=message.id
+        db,
+        user["user_id"],
+        message.session_id,
+        messages,
+        parent_id=message.id,
+        history_messages=[{"role": item.role, "content": item.content} for item in history],
     )
     return {"success": True, "message": "修改成功"}
 
@@ -206,10 +222,16 @@ def send_message_stream_service(db, user, request):
         update_session(db, request.session_id, message)
         enqueue_session_title_generation(request.session_id, message, user_id)
 
-        messages = load_chat_context(db, request.session_id, message)
+        history_messages = load_chat_context(db, request.session_id, message)
+        messages = augment_messages_with_rag(db, user_id, message, history_messages)
 
         yield from stream_ai_reply(
-            db, user_id, request.session_id, messages, parent_id=user_message.id
+            db,
+            user_id,
+            request.session_id,
+            messages,
+            parent_id=user_message.id,
+            history_messages=history_messages,
         )
 
     except Exception as error:  # noqa: BLE001

@@ -1,11 +1,13 @@
 from typing import Annotated, Any
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 
 from .captcha import _verify_captcha
+from .rbac import build_user_context, get_default_role, sync_default_rbac
 from ..core.config import settings
+from ..core.database import get_db
 from ..core.redis import redis_delete, redis_get_json, redis_set_json
 from ..core.security import (
     create_access_token,
@@ -24,12 +26,11 @@ USER_CACHE_TTL_SECONDS = settings.user_cache_ttl_seconds
 TOKEN_KEY_PREFIX = "auth:token:"
 USER_KEY_PREFIX = "user:profile:"
 
+security = HTTPBearer()
+
 
 def create_token(data: dict[str, Any]):
     return create_access_token(data, ttl_seconds=ACCESS_TOKEN_TTL_SECONDS)
-
-
-security = HTTPBearer()
 
 
 def _token_key(token: str) -> str:
@@ -49,10 +50,14 @@ def get_cached_user(user_id: int) -> dict[str, Any] | None:
 
 
 def create_login_session(user):
-    user_info = {"user_id": user.id, "username": user.username}
-    token = create_token(user_info)
+    user_info = build_user_context(user)
+    token = create_token(
+        {
+            "user_id": user_info["user_id"],
+            "username": user_info["username"],
+        }
+    )
     redis_set_json(_token_key(token), user_info, ttl=ACCESS_TOKEN_TTL_SECONDS)
-    cache_user(user_info)
     return token
 
 
@@ -66,52 +71,84 @@ def get_current_token(
     return credentials.credentials
 
 
-def get_current_user(token: Annotated[str, Depends(get_current_token)]) -> dict[str, Any]:
+def _resolve_current_user(db, token: str) -> dict[str, Any]:
     try:
         payload = decode_token(token)
-    except JWTError:
+    except JWTError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="INVALID TOKEN",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+
+    session = redis_get_json(_token_key(token))
+    if not session or session.get("user_id") != payload.get("user_id"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="INVALID TOKEN",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    user = redis_get_json(_token_key(token))
-    if not user or user.get("user_id") != payload.get("user_id"):
+    db_user = get_user_by_id(db, session["user_id"])
+    if not db_user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="INVALID TOKEN",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    user_info = build_user_context(db_user)
+    redis_set_json(_token_key(token), user_info, ttl=ACCESS_TOKEN_TTL_SECONDS)
+    return user_info
+
+
+def resolve_current_user_context(db, token: str) -> dict[str, Any]:
+    return _resolve_current_user(db, token)
+
+
+def get_current_user(
+    request: Request,
+    token: Annotated[str, Depends(get_current_token)],
+    db = Depends(get_db),
+) -> dict[str, Any]:
+    current_user = getattr(request.state, "current_user", None)
+    if current_user and current_user.get("token") == token:
+        return current_user["user"]
+
+    user = _resolve_current_user(db, token)
+    request.state.current_user = {"token": token, "user": user}
     return user
 
 
 def register_user(db, request):
+    sync_default_rbac(db)
+
     username = request.username.strip()
     password = request.password.strip()
     user = get_user_by_username(db, username)
 
     if user:
-        return {"success": False, "message": "用户名已存在"}
+        return {"success": False, "message": "username already exists"}
 
     hashed_password = hash_password(password)
-    create_user(db, username, hashed_password)
-    return {"success": True, "message": "注册成功"}
+    default_role = get_default_role(db)
+    create_user(db, username, hashed_password, role_id=default_role.id)
+    return {"success": True, "message": "registration successful"}
 
 
 def login_user(db, request):
     if not _verify_captcha(request.captcha_id, request.captcha_code):
-        return {"success": False, "message": "验证码错误或已过期"}
+        return {"success": False, "message": "invalid captcha"}
 
     username = request.username.strip()
     password = request.password.strip()
     user = get_user_by_username(db, username)
 
     if not user:
-        return {"success": False, "message": "用户不存在"}
+        return {"success": False, "message": "user not found"}
 
     if not verify_password(password, user.password):
-        return {"success": False, "message": "密码错误"}
+        return {"success": False, "message": "invalid password"}
 
     token = create_login_session(user)
     return {
@@ -124,18 +161,13 @@ def login_user(db, request):
 
 def logout_user(token):
     revoke_login_session(token)
-    return {"success": True, "message": "退出登录成功"}
+    return {"success": True, "message": "logout successful"}
 
 
 def get_user_profile_service(db, user):
-    cached_user = get_cached_user(user["user_id"])
-    if cached_user:
-        return {"success": True, **cached_user}
-
     db_user = get_user_by_id(db, user["user_id"])
     if not db_user:
-        raise BusinessError("用户不存在")
+        raise BusinessError("user does not exist")
 
-    user_info = {"user_id": db_user.id, "username": db_user.username}
-    cache_user(user_info)
+    user_info = build_user_context(db_user)
     return {"success": True, **user_info}

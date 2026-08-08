@@ -37,6 +37,16 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/aichat"
     chat_ttl_seconds: int = 60 * 60
     stop_generation_ttl_seconds: int = 60 * 5
+    bootstrap_admin_username: str | None = "admin"
+    bootstrap_admin_password: str | None = "admin123456"
+    rag_enabled: bool = True
+    rag_upload_dir: str = "backend/uploads/rag"
+    rag_embedding_model: str = "text-embedding-3-small"
+    rag_embedding_dimension: int = 1536
+    rag_top_k: int = 5
+    rag_chunk_size: int = 900
+    rag_chunk_overlap: int = 150
+    rag_max_context_chars: int = 5000
 
     @model_validator(mode="after")
     def fill_derived_defaults(self):
