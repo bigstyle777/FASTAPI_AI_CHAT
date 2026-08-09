@@ -15,16 +15,16 @@ from ..schemas import (
     AdminUserResponse,
     PermissionResponse,
     RoleCreateRequest,
-    RoleResponse,
     RolePermissionsRequest,
+    RoleResponse,
     UpdateUserRoleRequest,
 )
 from ..services.auth import get_current_user
 from ..services.rbac import (
     assign_role_to_user,
     build_user_context,
-    list_roles_with_permissions,
     get_role_permissions,
+    list_roles_with_permissions,
     set_role_permissions,
     sync_default_rbac,
 )
@@ -68,7 +68,9 @@ def dashboard(user: CurrentUser, db: Database):
             "users": len(users),
             "roles": len(list_roles_with_permissions(db)),
             "permissions": len(permissions),
-            "admin_users": sum(1 for item in users if getattr(item.role, "name", "") == "admin"),
+            "admin_users": sum(
+                1 for item in users if getattr(item.role, "name", "") == "admin"
+            ),
         },
     }
 
@@ -81,11 +83,15 @@ def list_users(user: CurrentUser, db: Database):
 
 
 @router.patch("/users/{user_id}/role")
-def update_user_role(user_id: int, request: UpdateUserRoleRequest, user: CurrentUser, db: Database):
+def update_user_role(
+    user_id: int, request: UpdateUserRoleRequest, user: CurrentUser, db: Database
+):
     _ensure_admin(user)
     sync_default_rbac(db)
 
-    target_user = next((item for item in get_users_with_roles(db) if item.id == user_id), None)
+    target_user = next(
+        (item for item in get_users_with_roles(db) if item.id == user_id), None
+    )
     if not target_user:
         return {"success": False, "message": "user not found"}
 
