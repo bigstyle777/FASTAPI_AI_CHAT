@@ -7,19 +7,21 @@ import { useThemeStore } from '@/stores/theme'
 type MarkdownItInstance = InstanceType<typeof MarkdownIt>
 
 let mdInstance: MarkdownItInstance | null = null
+let lightMdInstance: MarkdownItInstance | null = null
 let mermaidInitialized = false
 
-function getMarkdownInstance(): MarkdownItInstance | null {
-  if (mdInstance) return mdInstance
-
-  mdInstance = new MarkdownIt({
+function buildMarkdownInstance(useHighlight: boolean): MarkdownItInstance {
+  const md: MarkdownItInstance = new MarkdownIt({
     html: false,
     breaks: true,
     linkify: true,
-    highlight(code, lang) {
+    highlight(code: string, lang: string): string {
+      // 流式渲染时跳过 highlight.js：自动语言检测（highlightAuto）在长代码块上
+      // 会阻塞主线程，导致页面长时间不重绘、回复"卡住后一次性蹦出"
+      if (!useHighlight) return ''
       const language = (lang || '').toLowerCase()
       if (language === 'mermaid') {
-        return `<pre class="mermaid-pre"><code class="language-mermaid">${mdInstance!.utils.escapeHtml(code)}</code></pre>`
+        return `<pre class="mermaid-pre"><code class="language-mermaid">${md.utils.escapeHtml(code)}</code></pre>`
       }
       if (language && hljs.getLanguage(language)) {
         try {
@@ -31,13 +33,25 @@ function getMarkdownInstance(): MarkdownItInstance | null {
       try {
         return `<pre class="hljs"><code class="hljs">${hljs.highlightAuto(code).value}</code></pre>`
       } catch {
-        return `<pre class="hljs"><code>${mdInstance!.utils.escapeHtml(code)}</code></pre>`
+        return `<pre class="hljs"><code>${md.utils.escapeHtml(code)}</code></pre>`
       }
     },
   })
 
-  mdInstance.use(markdownItKatex)
+  md.use(markdownItKatex)
+  return md
+}
+
+function getMarkdownInstance(): MarkdownItInstance | null {
+  if (mdInstance) return mdInstance
+  mdInstance = buildMarkdownInstance(true)
   return mdInstance
+}
+
+function getLightMarkdownInstance(): MarkdownItInstance | null {
+  if (lightMdInstance) return lightMdInstance
+  lightMdInstance = buildMarkdownInstance(false)
+  return lightMdInstance
 }
 
 /** 在容器内渲染完整 markdown（非流式） */
@@ -124,6 +138,31 @@ function findUnclosedInlineMathStart(text: string, limit: number): number {
   return openIndex
 }
 
+const SENTENCE_END_CHARS = '。！？!?…；;.'
+
+function findLastSentenceEnd(text: string, limit: number): number {
+  const end = Math.min(limit, text.length)
+  for (let i = end - 1; i >= 0; i--) {
+    if (SENTENCE_END_CHARS.includes(text.charAt(i))) {
+      return i + 1
+    }
+  }
+  return -1
+}
+
+/** 判断在 cut 位置截断是否安全：不会把未闭合的代码块/行内代码/公式切成两半 */
+function isSafeStreamingCut(text: string, cut: number): boolean {
+  let fenceOpen = false
+  for (const line of text.slice(0, cut).split('\n')) {
+    if (/^[`~]{3,}/.test(line)) fenceOpen = !fenceOpen
+  }
+  if (fenceOpen) return false
+  if (findUnclosedInlineCodeStart(text, cut) >= 0) return false
+  if (findUnclosedBlockMathStart(text, cut) >= 0) return false
+  if (findUnclosedInlineMathStart(text, cut) >= 0) return false
+  return true
+}
+
 function findStreamingBoundary(text: string): number {
   if (!text) return 0
   let safeLimit = text.length
@@ -140,13 +179,23 @@ function findStreamingBoundary(text: string): number {
   const inlineMathStart = findUnclosedInlineMathStart(text, safeLimit)
   if (inlineMathStart >= 0) safeLimit = Math.min(safeLimit, inlineMathStart)
 
+  const candidates: number[] = []
+
   const blockBoundary = text.lastIndexOf('\n\n', safeLimit)
-  if (blockBoundary >= 0) return blockBoundary + 2
+  if (blockBoundary >= 0) candidates.push(blockBoundary + 2)
+
+  const sentenceCut = findLastSentenceEnd(text, safeLimit)
+  if (sentenceCut > 0) candidates.push(sentenceCut)
 
   const lineBoundary = text.lastIndexOf('\n', safeLimit)
-  if (lineBoundary >= 80) return lineBoundary + 1
+  if (lineBoundary >= 80) candidates.push(lineBoundary + 1)
 
-  return safeLimit
+  for (const cut of candidates) {
+    if (isSafeStreamingCut(text, cut)) return cut
+  }
+
+  // 兜底：保留一段尾部窗口作为纯文本 tail，避免整段 markdown 逐 token 重渲染
+  return Math.max(0, safeLimit - 60)
 }
 
 /** 在 DOM 容器上渲染完整 markdown，并处理 mermaid 和代码复制按钮 */
@@ -166,8 +215,9 @@ export function renderStreamingMarkdownToContainer(
   container: HTMLElement,
   text: string,
   stableTracker: { value: string },
+  canRenderStable: () => boolean = () => true,
 ): void {
-  const md = getMarkdownInstance()
+  const md = getLightMarkdownInstance()
   if (!md || !text) {
     container.textContent = text || ''
     return
@@ -176,7 +226,7 @@ export function renderStreamingMarkdownToContainer(
   const { stable, tail } = renderStreamingMarkdown(text)
 
   try {
-    if (stable && stableTracker.value !== stable) {
+    if (stable && stableTracker.value !== stable && canRenderStable()) {
       container.innerHTML = md.render(stable)
       container.classList.add('markdown-body')
       stableTracker.value = stable
@@ -268,6 +318,8 @@ async function renderMermaidBlocks(container: HTMLElement): Promise<void> {
 /** composable: 提供响应式的 markdown 渲染状态 */
 export function useMarkdown() {
   const stableTracker = ref('')
+  let lastStableRender = 0
+  const STABLE_RENDER_INTERVAL = 120
 
   async function renderFull(container: HTMLElement | null, text: string) {
     if (!container) return
@@ -277,11 +329,19 @@ export function useMarkdown() {
 
   function renderStream(container: HTMLElement | null, text: string) {
     if (!container) return
-    renderStreamingMarkdownToContainer(container, text, stableTracker)
+    renderStreamingMarkdownToContainer(container, text, stableTracker, () => {
+      const now = Date.now()
+      if (now - lastStableRender >= STABLE_RENDER_INTERVAL) {
+        lastStableRender = now
+        return true
+      }
+      return false
+    })
   }
 
   function resetStream() {
     stableTracker.value = ''
+    lastStableRender = 0
   }
 
   return {
