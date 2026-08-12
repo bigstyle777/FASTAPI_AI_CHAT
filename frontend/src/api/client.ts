@@ -24,9 +24,14 @@ export async function apiCall(
   requestOptions: RequestOptions = {},
 ): Promise<Response | null> {
   const { auth = true, handleUnauthorized = true } = requestOptions
+  // 默认 JSON；但当 body 是 FormData 时，必须由浏览器自动设置
+  // multipart/form-data 及其 boundary，若强制 application/json 会导致后端 422
+  const isFormData = options.body instanceof FormData
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
     ...(options.headers as Record<string, string>),
+  }
+  if (!isFormData && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json'
   }
 
   if (auth) {

@@ -66,9 +66,18 @@ export function fetchUserSettings(): Promise<UserSettings | null> {
 export function saveUserSettings(
   apiKey: string,
   provider: string,
+  embeddingApiKey: string,
+  embeddingBaseUrl: string,
+  embeddingModel: string,
 ): Promise<UserSettings | null> {
   return apiJson<UserSettings>('/users/settings', {
     method: 'POST',
-    body: JSON.stringify({ api_key: apiKey, provider }),
+    body: JSON.stringify({
+      api_key: apiKey,
+      provider,
+      embedding_api_key: embeddingApiKey,
+      embedding_base_url: embeddingBaseUrl,
+      embedding_model: embeddingModel,
+    }),
   })
 }

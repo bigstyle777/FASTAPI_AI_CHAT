@@ -84,7 +84,7 @@ onMounted(async () => {
     <aside class="sidebar">
       <div class="sidebar-header">
         <div class="brand-row">
-          <span class="brand-mark small">AI</span>
+          <img src="/logo.png" class="brand-logo small" alt="AI Chat Pro">
           <div>
             <h2>AI Chat Pro</h2>
             <p>管理中心</p>

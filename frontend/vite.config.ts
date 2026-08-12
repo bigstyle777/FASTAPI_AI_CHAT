@@ -4,10 +4,10 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import vueDevTools from 'vite-plugin-vue-devtools'
 
-// SPA 回退：仅对前端路由（/chat、/admin 等）返回 index.html
+// SPA 回退：仅对前端路由返回 index.html
 // 避免 Vite 代理将这些路由转发到后端
 function spaFallbackPlugin() {
-  const SPA_ROUTES = new Set(['/', '/chat', '/login', '/profile', '/admin'])
+  const SPA_ROUTES = new Set(['/', '/chat', '/login', '/profile', '/admin', '/knowledge'])
   return {
     name: 'spa-fallback',
     configureServer(server: any) {
@@ -46,6 +46,10 @@ export default defineConfig({
         changeOrigin: true,
       },
       '/admin': {
+        target: 'http://127.0.0.1:8001',
+        changeOrigin: true,
+      },
+      '/rag': {
         target: 'http://127.0.0.1:8001',
         changeOrigin: true,
       },

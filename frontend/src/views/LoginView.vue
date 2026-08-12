@@ -94,7 +94,7 @@ onMounted(() => {
 <template>
   <div class="login-page">
     <div class="login-card">
-      <div class="brand-mark">AI</div>
+      <img src="/logo.png" class="brand-logo" alt="AI Chat Pro">
       <h1>AI Chat Pro</h1>
       <p class="login-subtitle">登录后继续你的对话工作台</p>
 

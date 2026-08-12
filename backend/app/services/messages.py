@@ -10,6 +10,7 @@ from ..crud import (
     update_session,
 )
 from ..exceptions import BusinessError
+from ..rag.service import augment_messages_with_rag
 from ..schemas import (
     StreamDeltaEvent,
     StreamDoneEvent,
@@ -17,7 +18,6 @@ from ..schemas import (
     StreamUsageEvent,
     TokenUsage,
 )
-from ..rag.service import augment_messages_with_rag
 from .cache import (
     check_rate_limit,
     clear_generation_status,
@@ -82,7 +82,9 @@ def send_message_service(db, user, request):
     messages = augment_messages_with_rag(db, user["user_id"], message, messages)
     ai_reply = chat_with_ai(messages=messages, user_id=user["user_id"], db=db)
 
-    create_message(db, request.session_id, "assistant", ai_reply, parent_id=user_message.id)
+    create_message(
+        db, request.session_id, "assistant", ai_reply, parent_id=user_message.id
+    )
     update_session(db, request.session_id, ai_reply)
 
     return {"success": True}
@@ -191,7 +193,9 @@ def modify_message_services(db, user, message_id, new_content):
         message.session_id,
         messages,
         parent_id=message.id,
-        history_messages=[{"role": item.role, "content": item.content} for item in history],
+        history_messages=[
+            {"role": item.role, "content": item.content} for item in history
+        ],
     )
     return {"success": True, "message": "修改成功"}
 

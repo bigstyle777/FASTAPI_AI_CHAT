@@ -1,11 +1,11 @@
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from pgvector.sqlalchemy import Vector
 
-from .core.database import Base
 from .core.config import settings
+from .core.database import Base
 
 
 class RolePermission(Base):
@@ -144,6 +144,10 @@ class UserSetting(Base):
     )
     api_key: Mapped[str | None] = mapped_column(String, nullable=True)
     provider: Mapped[str] = mapped_column(String, default="deepseek")
+    # 用户独立的 RAG embedding key；为空时回退到系统 .env 的 RAG_EMBEDDING_API_KEY
+    embedding_api_key: Mapped[str | None] = mapped_column(String, nullable=True)
+    embedding_base_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    embedding_model: Mapped[str | None] = mapped_column(String(120), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,

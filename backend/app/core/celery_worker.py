@@ -6,7 +6,10 @@ celery_app = Celery(
     "aichat",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["backend.app.services.task.title_tasks"],
+    include=[
+        "backend.app.services.task.title_tasks",
+        "backend.app.rag.tasks",
+    ],
 )
 
 

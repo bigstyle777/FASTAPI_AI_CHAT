@@ -10,6 +10,9 @@ export interface UserProfile {
 export interface UserSettings {
   api_key: string
   provider: string
+  embedding_api_key: string | null
+  embedding_base_url: string | null
+  embedding_model: string | null
 }
 
 export interface CaptchaResponse {
@@ -143,3 +146,61 @@ export interface BranchResponse {
   session_id: number
   message?: string
 }
+
+// ===== RAG 知识库相关类型 =====
+export interface RagDocument {
+  document_id: number
+  filename: string
+  mime_type: string | null
+  file_size: number
+  status: 'pending' | 'ready' | 'failed' | 'processing'
+  chunk_count: number
+  embedding_model: string | null
+  error_message: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface RagDocumentListResponse {
+  success: boolean
+  documents: RagDocument[]
+}
+
+export interface RagUploadResponse {
+  success: boolean
+  document: RagDocument
+  message?: string
+}
+
+export interface RagSearchHit {
+  document_id: number
+  chunk_id: number
+  filename: string
+  content: string
+  score: number
+}
+
+export interface RagSearchResponse {
+  success: boolean
+  hits: RagSearchHit[]
+}
+
+// ===== RAG 上传 SSE 事件 =====
+export interface UploadProgressEvent {
+  type: 'progress'
+  stage: string
+  message: string
+  document?: RagDocument
+}
+
+export interface UploadDoneEvent {
+  type: 'done'
+  document: RagDocument
+}
+
+export interface UploadErrorEvent {
+  type: 'error'
+  message: string
+}
+
+export type UploadSSEEvent = UploadProgressEvent | UploadDoneEvent | UploadErrorEvent

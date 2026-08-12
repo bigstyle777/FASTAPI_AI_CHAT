@@ -1,0 +1,1 @@
+RAG 知识库测试文档。FastAPI 是一个现代、快速（高性能）的 Web 框架，用于基于标准 Python 类型提示构建 Python 3.7+ 的 API。它基于 Starlette 和 Pydantic，提供了自动文档生成、类型验证、异步支持等特性。FastAPI 的设计目标是让开发者能够快速构建高性能的 API 服务，同时保持代码的简洁和可维护性。

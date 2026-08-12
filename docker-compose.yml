@@ -14,7 +14,9 @@ services:
     restart: unless-stopped
 
   db:
-    image: postgres:17
+    build:
+      context: ./docker/postgres
+    image: aichat-postgres-pgvector
     container_name: aichat-postgres
     environment:
       POSTGRES_USER: postgres

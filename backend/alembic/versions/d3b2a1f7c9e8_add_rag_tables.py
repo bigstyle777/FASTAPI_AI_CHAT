@@ -71,7 +71,7 @@ def upgrade() -> None:
         sa.Column("chunk_id", sa.Integer(), nullable=False),
         sa.Column("model", sa.String(length=120), nullable=False),
         sa.Column("dimension", sa.Integer(), nullable=False),
-        sa.Column("embedding", Vector(1536), nullable=False),
+        sa.Column("embedding", Vector(1024), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.ForeignKeyConstraint(["chunk_id"], ["rag_chunks.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),

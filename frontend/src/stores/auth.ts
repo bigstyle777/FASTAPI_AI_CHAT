@@ -14,7 +14,13 @@ import { removeToken, getToken, setToken } from '@/api/client'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<UserProfile | null>(null)
-  const settings = ref({ api_key: '', provider: 'deepseek' })
+  const settings = ref({
+    api_key: '',
+    provider: 'deepseek',
+    embedding_api_key: null as string | null,
+    embedding_base_url: null as string | null,
+    embedding_model: null as string | null,
+  })
 
   const isLoggedIn = computed(() => !!getToken())
   const isAdmin = computed(() => user.value?.role === 'admin')
@@ -42,7 +48,13 @@ export const useAuthStore = defineStore('auth', () => {
     }
     removeToken()
     user.value = null
-    settings.value = { api_key: '', provider: 'deepseek' }
+    settings.value = {
+      api_key: '',
+      provider: 'deepseek',
+      embedding_api_key: null,
+      embedding_base_url: null,
+      embedding_model: null,
+    }
   }
 
   async function loadProfile() {
@@ -64,14 +76,35 @@ export const useAuthStore = defineStore('auth', () => {
       settings.value = {
         api_key: data.api_key || '',
         provider: data.provider || 'deepseek',
+        embedding_api_key: data.embedding_api_key ?? null,
+        embedding_base_url: data.embedding_base_url ?? null,
+        embedding_model: data.embedding_model ?? null,
       }
     }
   }
 
-  async function saveSettings(apiKey: string, provider: string) {
-    const data = await saveUserSettings(apiKey, provider)
+  async function saveSettings(
+    apiKey: string,
+    provider: string,
+    embeddingApiKey = '',
+    embeddingBaseUrl = '',
+    embeddingModel = '',
+  ) {
+    const data = await saveUserSettings(
+      apiKey,
+      provider,
+      embeddingApiKey,
+      embeddingBaseUrl,
+      embeddingModel,
+    )
     if (data) {
-      settings.value = { api_key: data.api_key || '', provider: data.provider || 'deepseek' }
+      settings.value = {
+        api_key: data.api_key || '',
+        provider: data.provider || 'deepseek',
+        embedding_api_key: data.embedding_api_key ?? null,
+        embedding_base_url: data.embedding_base_url ?? null,
+        embedding_model: data.embedding_model ?? null,
+      }
       return true
     }
     return false
@@ -80,7 +113,13 @@ export const useAuthStore = defineStore('auth', () => {
   function clearAuth() {
     removeToken()
     user.value = null
-    settings.value = { api_key: '', provider: 'deepseek' }
+    settings.value = {
+      api_key: '',
+      provider: 'deepseek',
+      embedding_api_key: null,
+      embedding_base_url: null,
+      embedding_model: null,
+    }
   }
 
   return {

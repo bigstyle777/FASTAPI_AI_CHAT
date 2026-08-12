@@ -99,3 +99,11 @@ def mark_document_failed(db: Session, document: RagDocument, message: str) -> No
     document.error_message = message[:2000]
     document.updated_at = datetime.utcnow()
     db.commit()
+
+
+def mark_document_processing(db: Session, document: RagDocument) -> None:
+    document.status = "processing"
+    document.error_message = None
+    document.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(document)

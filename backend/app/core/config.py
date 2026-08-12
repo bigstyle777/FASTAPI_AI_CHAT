@@ -41,8 +41,10 @@ class Settings(BaseSettings):
     bootstrap_admin_password: str | None = "admin123456"
     rag_enabled: bool = True
     rag_upload_dir: str = "backend/uploads/rag"
-    rag_embedding_model: str = "text-embedding-3-small"
-    rag_embedding_dimension: int = 1536
+    rag_embedding_api_key: str | None = None
+    rag_embedding_base_url: str = "https://api.siliconflow.cn/v1"
+    rag_embedding_model: str = "BAAI/bge-large-zh-v1.5"
+    rag_embedding_dimension: int = 1024
     rag_top_k: int = 5
     rag_chunk_size: int = 900
     rag_chunk_overlap: int = 150

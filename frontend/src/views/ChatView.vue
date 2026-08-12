@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useChatStore } from '@/stores/chat'
 import { useThemeStore } from '@/stores/theme'
+import { useUiStore } from '@/stores/ui'
 import SessionItem from '@/components/chat/SessionItem.vue'
 import MessageItem from '@/components/chat/MessageItem.vue'
 import RenameModal from '@/components/chat/RenameModal.vue'
@@ -12,6 +13,7 @@ const router = useRouter()
 const authStore = useAuthStore()
 const chatStore = useChatStore()
 const themeStore = useThemeStore()
+const uiStore = useUiStore()
 
 const messageInput = ref('')
 const messagesContainer = ref<HTMLElement | null>(null)
@@ -133,19 +135,30 @@ watch(
 <template>
   <div class="app-shell">
     <!-- 侧边栏 -->
-    <aside class="sidebar">
+    <aside :class="['sidebar', { collapsed: uiStore.sidebarCollapsed }]">
       <div class="sidebar-header">
         <div class="brand-row">
-          <span class="brand-mark small">AI</span>
-          <div>
+          <img src="/logo.png" class="brand-logo small" alt="AI Chat Pro">
+          <div class="brand-text">
             <h2>AI Chat Pro</h2>
             <p>智能对话工作台</p>
           </div>
+          <button
+            class="sidebar-toggle"
+            type="button"
+            :title="uiStore.sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
+            @click="uiStore.toggleSidebar()"
+          >{{ uiStore.sidebarCollapsed ? '»' : '«' }}</button>
         </div>
-        <button class="new-chat-btn" type="button" @click="chatStore.createNewSession">新建聊天</button>
+        <button
+          class="new-chat-btn"
+          type="button"
+          :title="uiStore.sidebarCollapsed ? '新建聊天' : ''"
+          @click="chatStore.createNewSession"
+        >{{ uiStore.sidebarCollapsed ? '+' : '新建聊天' }}</button>
       </div>
 
-      <div class="session-list">
+      <div v-if="!uiStore.sidebarCollapsed" class="session-list">
         <template v-if="isInitialLoading">
           <div class="sidebar-loading">加载中...</div>
         </template>
@@ -162,7 +175,25 @@ watch(
       </div>
 
       <div class="sidebar-footer">
-        <div class="theme-switcher">
+        <div class="sidebar-nav">
+          <button class="nav-item active" type="button" title="对话">
+            <span class="nav-icon">✈</span>
+            <span class="nav-label">对话</span>
+          </button>
+          <button class="nav-item" type="button" title="知识库" @click="router.push('/knowledge')">
+            <span class="nav-icon">◈</span>
+            <span class="nav-label">知识库</span>
+          </button>
+          <button v-if="isAdmin" class="nav-item" type="button" title="管理员中心" @click="router.push('/admin')">
+            <span class="nav-icon">⚙</span>
+            <span class="nav-label">管理员中心</span>
+          </button>
+          <button class="nav-item" type="button" title="个人中心" @click="router.push('/profile')">
+            <span class="nav-icon">☰</span>
+            <span class="nav-label">个人中心</span>
+          </button>
+        </div>
+        <div v-if="!uiStore.sidebarCollapsed" class="theme-switcher">
           <button
             v-for="t in ['light', 'dark', 'system']"
             :key="t"
@@ -170,13 +201,16 @@ watch(
             type="button"
             @click="themeStore.setTheme(t)"
           >
-            {{ t === 'light' ? '浅色' : t === 'dark' ? '深色' : '系统' }}
+            {{ t === 'light' ? '☀' : t === 'dark' ? '☾' : '◐' }}
           </button>
         </div>
-        <button v-if="isAdmin" class="ghost-btn" type="button" @click="router.push('/admin')">管理员中心</button>
-        <button class="ghost-btn" type="button" @click="router.push('/profile')">个人中心</button>
-        <button class="ghost-btn danger" type="button" @click="handleLogout">退出登录</button>
-        <div class="sidebar-meta">
+        <button
+          class="ghost-btn danger"
+          type="button"
+          :title="uiStore.sidebarCollapsed ? '退出登录' : ''"
+          @click="handleLogout"
+        >{{ uiStore.sidebarCollapsed ? '⎋' : '退出登录' }}</button>
+        <div v-if="!uiStore.sidebarCollapsed" class="sidebar-meta">
           <span>{{ authStore.user?.username || '--' }}</span>
           <span>{{ authStore.user?.role || '--' }}</span>
         </div>
@@ -190,7 +224,9 @@ watch(
           <h1>AI Assistant</h1>
           <p>清晰、连续、专注的对话体验</p>
         </div>
-        <span class="status-pill">在线</span>
+        <div class="header-badges">
+          <span class="status-pill">在线</span>
+        </div>
       </header>
 
       <div v-if="chatStore.notice.message" :class="['notice', chatStore.notice.type]">
@@ -200,7 +236,7 @@ watch(
       <div ref="messagesContainer" class="messages-container">
         <template v-if="isInitialLoading">
           <div class="empty-state">
-            <div class="empty-icon">AI</div>
+            <img src="/logo.png" class="empty-logo" alt="AI Chat Pro">
             <h2>正在加载...</h2>
             <p>正在同步你的会话和消息记录。</p>
           </div>
@@ -214,7 +250,7 @@ watch(
           />
         </template>
         <div v-else class="empty-state">
-          <div class="empty-icon">AI</div>
+          <img src="/logo.png" class="empty-logo" alt="AI Chat Pro">
           <h2>开始一段新的对话</h2>
           <p>选择左侧会话，或者新建聊天后输入你的问题。</p>
         </div>
