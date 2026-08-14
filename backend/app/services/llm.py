@@ -9,7 +9,8 @@ except Exception:  # pragma: no cover - optional dependency fallback
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
-from ..schemas import StreamDeltaEvent, StreamErrorEvent, StreamUsageEvent, TokenUsage
+from ..schemas import StreamErrorEvent
+from .tool_calling import run_tool_loop, stream_with_tools
 
 
 def _get_client(api_key=None, provider="deepseek"):
@@ -38,16 +39,16 @@ def _build_fallback_reply(messages: list, api_key=None, error=None):
 
     if not api_key:
         return (
-            "当前 AI 服务暂时不可用，原因是未配置有效的 API Key。"
-            "请在个人中心页面输入你的 API Key，然后保存设置。"
+            "当前 AI 服务暂不可用，原因是未配置有效的 API Key。"
+            "请先在个人中心页面输入你的 API Key，然后保存设置。"
         )
 
     for message in reversed(messages):
         if message.get("role") == "user":
             content = (message.get("content") or "").strip()
             if content:
-                return f"当前 AI 服务暂时不可用，我先记下你的问题：{content}"
-    return "当前 AI 服务暂时不可用，请稍后再试。"
+                return f"当前 AI 服务暂不可用，我先记下你的问题：{content}"
+    return "当前 AI 服务暂不可用，请稍后再试。"
 
 
 def _build_fallback_title(message: str):
@@ -63,7 +64,7 @@ def _clean_generated_title(title: str) -> str:
     title = title.strip().strip("\"'“”‘’")
     title = re.sub(r"[\r\n]+", " ", title)
     title = re.sub(r"\s+", "", title)
-    title = title.strip("，。！？、：:；;,.!?")
+    title = title.strip("，。！？、：:,.!?")
     return title[:15]
 
 
@@ -137,9 +138,15 @@ def chat_with_ai(messages: list, user_id=None, db=None):
     client, model = result
 
     try:
+        # 先跑工具调用循环；没有注册工具或轮数耗尽时 content 为 None
+        history, content = run_tool_loop(client, model, messages)
+        if content is not None:
+            return content
+
+        # 兜底: 普通对话请求
         response = client.chat.completions.create(
             model=model,
-            messages=messages,
+            messages=history,
         )
         content = response.choices[0].message.content
         return content or _build_fallback_reply(messages, api_key=api_key)
@@ -150,7 +157,7 @@ def chat_with_ai(messages: list, user_id=None, db=None):
 def chat_with_ai_stream(
     messages: list, user_id: int | None = None, db: Session | None = None
 ):
-    # 找setting
+    # 获取用户个人 AI 设置（个人中心保存的 Key 优先）
     api_key, provider = _get_user_ai_settings(user_id=user_id, db=db)
     result = _get_client(api_key=api_key, provider=provider)
     if not result:
@@ -160,32 +167,8 @@ def chat_with_ai_stream(
     client, model = result
 
     try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            stream=True,
-            stream_options={"include_usage": True},
-        )
-
-        for chunk in response:
-            # 最后一个 chunk 会携带 usage
-            if getattr(chunk, "usage", None):
-                yield StreamUsageEvent(
-                    usage=TokenUsage(
-                        prompt_tokens=chunk.usage.prompt_tokens,
-                        completion_tokens=chunk.usage.completion_tokens,
-                        total_tokens=chunk.usage.total_tokens,
-                        model=model,
-                    )
-                )
-                continue
-
-            if not chunk.choices:
-                continue
-
-            content = chunk.choices[0].delta.content
-            if content:
-                yield StreamDeltaEvent(content=content)
+        # 流式生成，内部自动处理工具调用（逻辑见 services/tool_calling.py）
+        yield from stream_with_tools(client, model, messages)
     except Exception as error:
         yield StreamErrorEvent(
             message=_build_fallback_reply(messages, api_key=api_key, error=error)

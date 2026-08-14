@@ -8,8 +8,8 @@ from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
 from ..core.config import PROJECT_ROOT, settings
-from ..exceptions import BusinessError
 from ..core.sse import sse_event
+from ..exceptions import BusinessError
 from .crud import (
     create_document,
     delete_document,
@@ -103,7 +103,7 @@ def stream_upload_document_service(
         _mark_failed(db, document, str(error.message))
         _delete_untracked_file(document, storage_path)
         yield sse_event("error", {"message": str(error.message)})
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:  
         logger.exception("RAG upload failed")
         _mark_failed(db, document, str(error))
         _delete_untracked_file(document, storage_path)

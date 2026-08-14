@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     rag_chunk_size: int = 900
     rag_chunk_overlap: int = 150
     rag_max_context_chars: int = 5000
+    tavily_api_key: str | None = None
 
     @model_validator(mode="after")
     def fill_derived_defaults(self):
