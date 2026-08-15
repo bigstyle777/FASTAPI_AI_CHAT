@@ -7,7 +7,7 @@ from .core.database import SessionLocal
 from .core.redis import RedisUnavailableError
 from .exceptions import BusinessError
 from .rag.router import router as rag_router
-from .routers import admin, chat, users
+from .routers import admin, chat, memory, users
 from .services.auth import resolve_current_user_context
 from .services.rbac import ensure_bootstrap_admin, sync_default_rbac
 
@@ -40,6 +40,7 @@ app.add_middleware(
 app.include_router(rag_router)
 app.include_router(users.router)
 app.include_router(chat.router)
+app.include_router(memory.router)
 app.include_router(admin.router)
 
 

@@ -8,16 +8,34 @@ Tool Calling 主循环
 新增工具时只需要在 tools/ 目录加模块，这里不用改。
 """
 
+import inspect
 import json
+import logging
 from typing import Any, Callable
 
 from ..schemas import StreamDeltaEvent, StreamUsageEvent, TokenUsage
 from ..tools import ALL_TOOLS, TOOL_REGISTRY
 
+logger = logging.getLogger(__name__)
+
 MAX_TOOL_TURNS = 5
 
 
-def _execute_tool_call(tool_call) -> str:
+def _call_tool(func: Callable[..., Any], args: dict, context: dict | None):
+    """执行工具函数；函数声明了 db / user_id 形参时自动注入会话上下文。"""
+    if not context:
+        return func(**args)
+
+    params = inspect.signature(func).parameters
+    inject = {
+        name: context[name]
+        for name in ("db", "user_id")
+        if name in params and name in context
+    }
+    return func(**args, **inject)
+
+
+def _execute_tool_call(tool_call, context: dict | None = None) -> str:
     """执行单个工具调用，返回给模型看的 JSON 字符串结果。"""
     if isinstance(tool_call, dict):
         function = tool_call.get("function") or {}
@@ -29,24 +47,56 @@ def _execute_tool_call(tool_call) -> str:
             getattr(getattr(tool_call, "function", None), "arguments", "") or ""
         )
 
-    try:
-        args = json.loads(raw_arguments) if raw_arguments.strip() else {}
-    except json.JSONDecodeError:
-        args = {}
-
     func: Callable[..., Any] | None = TOOL_REGISTRY.get(name)
     if func is None:
-        return json.dumps({"error": f"工具不存在: {name}"}, ensure_ascii=False)
+        logger.warning("工具不存在: %s", name)
+        return json.dumps(
+            {
+                "error": f"工具不存在: {name}",
+                "error_type": "ToolNotFound",
+                "available_tools": sorted(TOOL_REGISTRY),
+            },
+            ensure_ascii=False,
+        )
 
     try:
-        result = func(**args)
+        args = json.loads(raw_arguments) if raw_arguments.strip() else {}
+    except json.JSONDecodeError as error:
+        # 参数是模型生成的，告诉它 JSON 不合法，让它自己修正后重试
+        logger.warning("工具 %s 的参数不是合法 JSON: %s", name, error)
+        return json.dumps(
+            {
+                "error": f"参数不是合法 JSON: {error}",
+                "error_type": "InvalidArguments",
+                "raw_arguments": raw_arguments,
+            },
+            ensure_ascii=False,
+        )
+
+    try:
+        result = _call_tool(func, args, context)
+        logger.info("工具调用成功: %s", name)
         return json.dumps(result, ensure_ascii=False)
     except Exception as error:  # noqa: BLE001
-        # 把异常变成 JSON 回传给模型，模型能理解错误并继续作答
-        return json.dumps({"error": str(error)}, ensure_ascii=False)
+        # 把异常变成 JSON 回传给模型，模型能理解错误并决定是否修正参数重试
+        logger.warning("工具 %s 执行失败: %s", name, error)
+        return json.dumps(
+            {
+                "error": str(error),
+                "error_type": type(error).__name__,
+                "tool": name,
+            },
+            ensure_ascii=False,
+        )
 
 
-def run_tool_loop(client, model, messages, max_turns=MAX_TOOL_TURNS):
+def run_tool_loop(
+    client,
+    model,
+    messages,
+    context: dict | None = None,
+    max_turns=MAX_TOOL_TURNS,
+):
     """
     非流式工具调用循环（用于普通聊天接口）。
 
@@ -77,14 +127,14 @@ def run_tool_loop(client, model, messages, max_turns=MAX_TOOL_TURNS):
                 {
                     "role": "tool",
                     "tool_call_id": tool_call.id,
-                    "content": _execute_tool_call(tool_call),
+                    "content": _execute_tool_call(tool_call, context),
                 }
             )
 
     return history, None
 
 
-def stream_with_tools(client, model, messages):
+def stream_with_tools(client, model, messages, context: dict | None = None):
     """
     流式对话生成器（支持工具调用），产出 StreamDeltaEvent / StreamUsageEvent。
 
@@ -95,14 +145,20 @@ def stream_with_tools(client, model, messages):
     """
     history = [dict(m) for m in messages]
 
-    for _ in range(MAX_TOOL_TURNS + 1):
+    # 有工具时最多执行 MAX_TOOL_TURNS 轮工具调用，之后强制走一轮不带
+    # tools 的请求，让模型直接回答，避免轮次耗尽后用户收到空回复。
+    rounds = (MAX_TOOL_TURNS + 1) if ALL_TOOLS else 1
+
+    for round_index in range(rounds):
+        use_tools = bool(ALL_TOOLS) and round_index < MAX_TOOL_TURNS
+
         kwargs = {
             "model": model,
             "messages": history,
             "stream": True,
             "stream_options": {"include_usage": True},
         }
-        if ALL_TOOLS:
+        if use_tools:
             kwargs["tools"] = ALL_TOOLS
 
         response: Unknown = client.chat.completions.create(**kwargs)
@@ -144,7 +200,7 @@ def stream_with_tools(client, model, messages):
                 yield StreamDeltaEvent(content=content)
 
         # 这一轮流里有工具调用请求，执行后带着结果继续下一轮
-        if tool_call_parts:
+        if tool_call_parts and use_tools:
             tool_calls = [
                 {
                     "id": parts["id"],
@@ -171,7 +227,7 @@ def stream_with_tools(client, model, messages):
                     {
                         "role": "tool",
                         "tool_call_id": tool_call["id"],
-                        "content": _execute_tool_call(tool_call),
+                        "content": _execute_tool_call(tool_call, context),
                     }
                 )
             continue

@@ -138,8 +138,9 @@ def chat_with_ai(messages: list, user_id=None, db=None):
     client, model = result
 
     try:
+        context = {"db": db, "user_id": user_id}
         # 先跑工具调用循环；没有注册工具或轮数耗尽时 content 为 None
-        history, content = run_tool_loop(client, model, messages)
+        history, content = run_tool_loop(client, model, messages, context=context)
         if content is not None:
             return content
 
@@ -167,8 +168,9 @@ def chat_with_ai_stream(
     client, model = result
 
     try:
+        context = {"db": db, "user_id": user_id}
         # 流式生成，内部自动处理工具调用（逻辑见 services/tool_calling.py）
-        yield from stream_with_tools(client, model, messages)
+        yield from stream_with_tools(client, model, messages, context=context)
     except Exception as error:
         yield StreamErrorEvent(
             message=_build_fallback_reply(messages, api_key=api_key, error=error)

@@ -10,7 +10,6 @@ from ..crud import (
     update_session,
 )
 from ..exceptions import BusinessError
-from ..rag.service import augment_messages_with_rag
 from ..schemas import (
     StreamDeltaEvent,
     StreamDoneEvent,
@@ -34,6 +33,7 @@ from .message_context import (
 )
 from .task.title_queue import enqueue_session_title_generation
 from .utils import sse_event
+from .task.memory_queue import enqueue_memory_extraction
 
 
 def _validate_message_request(db, user, request):
@@ -79,13 +79,13 @@ def send_message_service(db, user, request):
 
     history = load_visible_messages(db, request.session_id)
     messages = [{"role": item.role, "content": item.content} for item in history]
-    messages = augment_messages_with_rag(db, user["user_id"], message, messages)
     ai_reply = chat_with_ai(messages=messages, user_id=user["user_id"], db=db)
 
     create_message(
         db, request.session_id, "assistant", ai_reply, parent_id=user_message.id
     )
     update_session(db, request.session_id, ai_reply)
+    enqueue_memory_extraction(user["user_id"], message)
 
     return {"success": True}
 
@@ -161,9 +161,22 @@ def stream_ai_reply(
         }
     )
     save_chat_context(session_id, saved_messages)
+    user_message_text = _last_user_message_text(messages)
+    if user_message_text:
+        enqueue_memory_extraction(user_id, user_message_text)
     yield sse_event("usage", StreamUsageEvent(usage=usage))
     yield sse_event("done", StreamDoneEvent())
     clear_generation_status(session_id)
+
+
+def _last_user_message_text(messages: list[dict[str, str]]) -> str:
+    """从对话历史里找最后一条用户消息，作为记忆提取的输入。"""
+    for message in reversed(messages):
+        if message.get("role") == "user":
+            content = (message.get("content") or "").strip()
+            if content:
+                return content
+    return ""
 
 
 def modify_message_services(db, user, message_id, new_content):
@@ -185,7 +198,6 @@ def modify_message_services(db, user, message_id, new_content):
 
     history = get_messages_by_session(db, message.session_id)
     messages = [{"role": item.role, "content": item.content} for item in history]
-    messages = augment_messages_with_rag(db, user["user_id"], new_content, messages)
 
     yield from stream_ai_reply(
         db,
@@ -227,7 +239,7 @@ def send_message_stream_service(db, user, request):
         enqueue_session_title_generation(request.session_id, message, user_id)
 
         history_messages = load_chat_context(db, request.session_id, message)
-        messages = augment_messages_with_rag(db, user_id, message, history_messages)
+        messages = history_messages
 
         yield from stream_ai_reply(
             db,

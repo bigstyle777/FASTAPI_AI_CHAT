@@ -10,10 +10,12 @@
 
 from collections.abc import Callable
 
-from . import calculator, weather, web_search
+from . import calculator, memory_search, rag_search, weather, web_search
 
 _TOOL_MODULES = (
     calculator,
+    memory_search,
+    rag_search,
     weather,
     web_search,
 )  # 所有工具模块，新增工具时在这里加一行

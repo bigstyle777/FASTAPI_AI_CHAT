@@ -8,6 +8,7 @@ celery_app = Celery(
     backend=settings.redis_url,
     include=[
         "backend.app.services.task.title_tasks",
+        "backend.app.services.task.memory_tasks",
         "backend.app.rag.tasks",
     ],
 )
