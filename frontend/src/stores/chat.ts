@@ -1,6 +1,15 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { ChatMessage, ChatSession, SSEEvent, TokenUsage } from '@/types'
+import type {
+  AgentSSEEvent,
+  ChatMessage,
+  ChatSession,
+  SSEDeltaEvent,
+  SSEErrorEvent,
+  SSEEvent,
+  SSEUsageEvent,
+  TokenUsage,
+} from '@/types'
 import {
   createSession as apiCreateSession,
   createMessageBranch,
@@ -10,6 +19,7 @@ import {
   fetchMessages,
   fetchSessions,
   modifyStreamMessage,
+  sendAgentMessage,
   sendStreamMessage,
   stopGeneration,
   updateSession as apiUpdateSession,
@@ -24,6 +34,7 @@ export const useChatStore = defineStore('chat', () => {
   const isStopping = ref(false)
   const streamingContent = ref('')
   const streamingUsage = ref<TokenUsage | null>(null)
+  const agentEvents = ref<AgentSSEEvent[]>([])
   const notice = ref<{ message: string; type: 'info' | 'success' | 'error' }>({ message: '', type: 'info' })
   const editingMessageId = ref<number | null>(null)
   let abortController: AbortController | null = null
@@ -270,6 +281,7 @@ export const useChatStore = defineStore('chat', () => {
     response: Response,
     onDelta: (fullReply: string) => void,
     onUsage: (usage: TokenUsage) => void,
+    onEvent?: (event: SSEEvent | AgentSSEEvent) => void,
   ): Promise<string> {
     const reader = response.body!.getReader()
     const decoder = new TextDecoder()
@@ -277,16 +289,20 @@ export const useChatStore = defineStore('chat', () => {
     let buffer = ''
     let hasError = false
 
-    const handleEvent = (_eventName: string, payload: SSEEvent) => {
+    const handleEvent = (_eventName: string, payload: SSEEvent | AgentSSEEvent) => {
+      onEvent?.(payload)
       const type = payload.type
       if (type === 'delta') {
-        fullReply += payload.content || ''
+        fullReply += (payload as SSEDeltaEvent).content || ''
         onDelta(fullReply)
       } else if (type === 'usage') {
-        onUsage(payload.usage)
+        onUsage((payload as SSEUsageEvent).usage)
       } else if (type === 'error') {
         hasError = true
-        fullReply = payload.message || payload.content || '请求失败，请稍后再试'
+        fullReply =
+          (payload as SSEErrorEvent).message ||
+          (payload as SSEErrorEvent).content ||
+          '请求失败，请稍后再试'
         onDelta(fullReply)
       }
     }
@@ -394,6 +410,92 @@ export const useChatStore = defineStore('chat', () => {
         console.error('发送消息失败:', error)
         aiMessage.content = '发送消息失败，请稍后再试'
         showNotice('发送消息失败，请稍后再试', 'error')
+      }
+    } finally {
+      abortController = null
+      isStopping.value = false
+      isSending.value = false
+      streamingContent.value = ''
+    }
+  }
+
+  async function sendAgentMessageAction(text: string) {
+    if (isSending.value) return
+    if (!text.trim()) {
+      showNotice('请输入消息内容', 'error')
+      return
+    }
+    if (!currentSessionId.value) {
+      showNotice('请先创建或选择一个会话', 'error')
+      return
+    }
+
+    isSending.value = true
+    clearNotice()
+    agentEvents.value = []
+
+    messages.value.push({
+      message_id: Date.now(),
+      role: 'user',
+      content: text,
+    })
+
+    const aiMessage: ChatMessage = {
+      message_id: Date.now() + 1,
+      role: 'assistant',
+      content: '',
+    }
+    messages.value.push(aiMessage)
+
+    streamingContent.value = '正在规划任务...'
+    streamingUsage.value = null
+    abortController = new AbortController()
+
+    try {
+      const response = await sendAgentMessage(
+        currentSessionId.value,
+        text,
+        abortController.signal,
+      )
+
+      if (!response || !response.body) {
+        aiMessage.content = '请求失败，请稍后再试'
+        streamingContent.value = ''
+        return
+      }
+
+      streamingContent.value = ''
+      const fullReply = await consumeStream(
+        response,
+        (reply) => {
+          streamingContent.value = reply
+          aiMessage.content = reply
+        },
+        (usage) => {
+          streamingUsage.value = usage
+          aiMessage.model = usage.model
+          aiMessage.prompt_tokens = usage.prompt_tokens
+          aiMessage.completion_tokens = usage.completion_tokens
+          aiMessage.total_tokens = usage.total_tokens
+        },
+        (event) => {
+          // 结构化事件先收集起来，后续可渲染计划/工具卡片面板
+          if (event.type !== 'delta' && event.type !== 'usage') {
+            agentEvents.value.push(event as AgentSSEEvent)
+          }
+        },
+      )
+
+      if (fullReply) {
+        aiMessage.content = fullReply
+      }
+      currentSessionHasMessages.value = true
+      await refreshSessionsOnly()
+    } catch (error) {
+      if (error instanceof Error && error.name !== 'AbortError') {
+        console.error('发送 agent 消息失败:', error)
+        aiMessage.content = '发送 agent 消息失败，请稍后再试'
+        showNotice('发送 agent 消息失败，请稍后再试', 'error')
       }
     } finally {
       abortController = null
@@ -518,6 +620,7 @@ export const useChatStore = defineStore('chat', () => {
     isStopping,
     streamingContent,
     streamingUsage,
+    agentEvents,
     notice,
     editingMessageId,
     showNotice,
@@ -533,6 +636,7 @@ export const useChatStore = defineStore('chat', () => {
     branchFromMessage,
     branchFromSession,
     sendMessage,
+    sendAgentMessage: sendAgentMessageAction,
     modifyMessage,
     stopStreaming,
     startEditingMessage,

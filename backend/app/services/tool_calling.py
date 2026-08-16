@@ -11,6 +11,7 @@ Tool Calling 主循环
 import inspect
 import json
 import logging
+from time import perf_counter
 from typing import Any, Callable
 
 from ..schemas import StreamDeltaEvent, StreamUsageEvent, TokenUsage
@@ -35,21 +36,44 @@ def _call_tool(func: Callable[..., Any], args: dict, context: dict | None):
     return func(**args, **inject)
 
 
-def _execute_tool_call(tool_call, context: dict | None = None) -> str:
-    """执行单个工具调用，返回给模型看的 JSON 字符串结果。"""
+def execute_tool_call(
+    tool_call,
+    context: dict | None = None,
+    *,
+    on_tool_call: Callable[..., Any] | None = None,
+    on_tool_result: Callable[..., Any] | None = None,
+) -> str:
+    """执行单个工具调用，返回给模型看的 JSON 字符串结果。
+
+    通过 on_tool_call / on_tool_result 回调向外暴露 trace 点：
+    - on_tool_call(tool_call_id, tool_name, arguments)
+    - on_tool_result(tool_call_id, tool_name, result, *, error, error_type, duration_ms)
+    普通聊天不传回调即可，agent 层通过回调把过程记入 trace。
+    """
     if isinstance(tool_call, dict):
         function = tool_call.get("function") or {}
         name = function.get("name", "")
         raw_arguments = function.get("arguments", "") or ""
+        call_id = tool_call.get("id", "")
     else:
         name = getattr(getattr(tool_call, "function", None), "name", "")
         raw_arguments = (
             getattr(getattr(tool_call, "function", None), "arguments", "") or ""
         )
+        call_id = getattr(tool_call, "id", "")
 
     func: Callable[..., Any] | None = TOOL_REGISTRY.get(name)
     if func is None:
         logger.warning("工具不存在: %s", name)
+        if on_tool_result:
+            on_tool_result(
+                call_id,
+                name,
+                None,
+                error=f"工具不存在: {name}",
+                error_type="ToolNotFound",
+                duration_ms=0,
+            )
         return json.dumps(
             {
                 "error": f"工具不存在: {name}",
@@ -64,6 +88,15 @@ def _execute_tool_call(tool_call, context: dict | None = None) -> str:
     except json.JSONDecodeError as error:
         # 参数是模型生成的，告诉它 JSON 不合法，让它自己修正后重试
         logger.warning("工具 %s 的参数不是合法 JSON: %s", name, error)
+        if on_tool_result:
+            on_tool_result(
+                call_id,
+                name,
+                None,
+                error=f"参数不是合法 JSON: {error}",
+                error_type="InvalidArguments",
+                duration_ms=0,
+            )
         return json.dumps(
             {
                 "error": f"参数不是合法 JSON: {error}",
@@ -73,13 +106,33 @@ def _execute_tool_call(tool_call, context: dict | None = None) -> str:
             ensure_ascii=False,
         )
 
+    if on_tool_call:
+        on_tool_call(call_id, name, args)
+
+    started_at = perf_counter()
     try:
         result = _call_tool(func, args, context)
         logger.info("工具调用成功: %s", name)
+        if on_tool_result:
+            on_tool_result(
+                call_id,
+                name,
+                result,
+                duration_ms=int((perf_counter() - started_at) * 1000),
+            )
         return json.dumps(result, ensure_ascii=False)
     except Exception as error:  # noqa: BLE001
         # 把异常变成 JSON 回传给模型，模型能理解错误并决定是否修正参数重试
         logger.warning("工具 %s 执行失败: %s", name, error)
+        if on_tool_result:
+            on_tool_result(
+                call_id,
+                name,
+                None,
+                error=str(error),
+                error_type=type(error).__name__,
+                duration_ms=int((perf_counter() - started_at) * 1000),
+            )
         return json.dumps(
             {
                 "error": str(error),
@@ -96,6 +149,8 @@ def run_tool_loop(
     messages,
     context: dict | None = None,
     max_turns=MAX_TOOL_TURNS,
+    on_tool_call: Callable[..., Any] | None = None,
+    on_tool_result: Callable[..., Any] | None = None,
 ):
     """
     非流式工具调用循环（用于普通聊天接口）。
@@ -127,14 +182,27 @@ def run_tool_loop(
                 {
                     "role": "tool",
                     "tool_call_id": tool_call.id,
-                    "content": _execute_tool_call(tool_call, context),
+                    "content": execute_tool_call(
+                        tool_call,
+                        context,
+                        on_tool_call=on_tool_call,
+                        on_tool_result=on_tool_result,
+                    ),
                 }
             )
 
     return history, None
 
 
-def stream_with_tools(client, model, messages, context: dict | None = None):
+def stream_with_tools(
+    client,
+    model,
+    messages,
+    context: dict | None = None,
+    *,
+    on_tool_call: Callable[..., Any] | None = None,
+    on_tool_result: Callable[..., Any] | None = None,
+):
     """
     流式对话生成器（支持工具调用），产出 StreamDeltaEvent / StreamUsageEvent。
 
@@ -215,6 +283,17 @@ def stream_with_tools(client, model, messages, context: dict | None = None):
                 )
             ]
 
+            # trace 起点：tool_call_parts 在这里组装完成，把每个调用暴露出去，
+            # agent 层据此记录"模型发起了工具调用"这一节点
+            if on_tool_call:
+                for tc in tool_calls:
+                    arguments = tc["function"]["arguments"]
+                    try:
+                        parsed_args = json.loads(arguments) if arguments.strip() else {}
+                    except json.JSONDecodeError:
+                        parsed_args = {"raw": arguments}
+                    on_tool_call(tc["id"], tc["function"]["name"], parsed_args)
+
             history.append(
                 {
                     "role": "assistant",
@@ -227,7 +306,11 @@ def stream_with_tools(client, model, messages, context: dict | None = None):
                     {
                         "role": "tool",
                         "tool_call_id": tool_call["id"],
-                        "content": _execute_tool_call(tool_call, context),
+                        "content": execute_tool_call(
+                            tool_call,
+                            context,
+                            on_tool_result=on_tool_result,
+                        ),
                     }
                 )
             continue

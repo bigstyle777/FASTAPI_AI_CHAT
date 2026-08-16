@@ -97,6 +97,90 @@ export interface SSEErrorEvent {
 
 export type SSEEvent = SSEDeltaEvent | SSEUsageEvent | SSEErrorEvent
 
+// ===== Agent 相关类型 =====
+export interface AgentPlanStep {
+  description: string
+  tool?: string | null
+  args?: Record<string, unknown>
+  expected_output?: string | null
+}
+
+export interface AgentPlanEvent {
+  type: 'agent_plan'
+  run_id: number
+  steps: AgentPlanStep[]
+}
+
+export interface AgentStepEvent {
+  type: 'agent_step'
+  run_id: number
+  index: number
+  step: AgentPlanStep
+  status: 'started' | 'completed' | 'failed' | 'skipped'
+  output?: string | null
+  error?: string | null
+}
+
+export interface AgentToolEvent {
+  type: 'agent_tool'
+  run_id: number
+  step_index: number
+  tool_call_id?: string | null
+  tool: string
+  arguments?: Record<string, unknown> | null
+  status: 'started' | 'completed' | 'failed'
+  result?: unknown
+  error?: string | null
+  duration_ms?: number | null
+}
+
+export interface AgentDoneEvent {
+  type: 'done'
+  run_id: number
+  status: 'completed' | 'stopped' | 'failed'
+}
+
+export type AgentSSEEvent =
+  | AgentPlanEvent
+  | AgentStepEvent
+  | AgentToolEvent
+  | AgentDoneEvent
+
+export interface AgentRun {
+  run_id: number
+  session_id: number
+  user_id: number
+  status: string
+  user_input: string
+  plan: AgentPlanStep[] | null
+  final_answer: string | null
+  model: string | null
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  error_message: string | null
+  created_at: string | null
+  updated_at: string | null
+  trace_count: number
+  traces?: AgentTracePoint[]
+}
+
+export interface AgentTracePoint {
+  id: number
+  sequence: number
+  stage: string
+  name: string
+  status: string
+  step_index: number | null
+  tool_call_id: string | null
+  tool_name: string | null
+  input_data: Record<string, unknown> | null
+  output_data: Record<string, unknown> | null
+  error_message: string | null
+  duration_ms: number | null
+  created_at: string | null
+}
+
 // ===== 管理员相关类型 =====
 export interface AdminDashboard {
   success: boolean

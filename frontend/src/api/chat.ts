@@ -1,6 +1,7 @@
 import { apiCall, apiJson } from './client'
 import type {
   ActionResponse,
+  AgentRun,
   BranchResponse,
   CreateSessionResponse,
   MessageListResponse,
@@ -74,6 +75,32 @@ export function sendStreamMessage(
       signal,
     },
   )
+}
+
+/**
+ * 发送流式 agent 消息，返回原始 Response 供调用方读取流。
+ * 事件协议与普通聊天一致，额外包含 agent_plan / agent_step / agent_tool 事件。
+ */
+export function sendAgentMessage(
+  sessionId: number,
+  message: string,
+  signal?: AbortSignal,
+): Promise<Response | null> {
+  return apiCall(
+    '/agent/stream',
+    {
+      method: 'POST',
+      body: JSON.stringify({ session_id: sessionId, message }),
+      signal,
+    },
+  )
+}
+
+/**
+ * 查看一次 agent 运行的完整 trace（排错用）。
+ */
+export function fetchAgentRun(runId: number): Promise<AgentRun | null> {
+  return apiJson<AgentRun>(`/agent/runs/${runId}`)
 }
 
 /**

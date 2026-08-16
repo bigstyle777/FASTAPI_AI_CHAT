@@ -6,6 +6,7 @@ from .core.config import settings
 from .core.database import SessionLocal
 from .core.redis import RedisUnavailableError
 from .exceptions import BusinessError
+from .agent.router import router as agent_router
 from .rag.router import router as rag_router
 from .routers import admin, chat, memory, users
 from .services.auth import resolve_current_user_context
@@ -38,6 +39,7 @@ app.add_middleware(
 
 
 app.include_router(rag_router)
+app.include_router(agent_router)
 app.include_router(users.router)
 app.include_router(chat.router)
 app.include_router(memory.router)
