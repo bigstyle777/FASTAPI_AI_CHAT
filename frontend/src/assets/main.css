@@ -1299,7 +1299,7 @@ h4 { font-size: 1rem; }
 
 .chat-minimap {
   position: relative;
-  width: 56px;
+  width: 64px;
   flex-shrink: 0;
   background: var(--bg);
   overflow: hidden;
@@ -1314,23 +1314,24 @@ h4 { font-size: 1rem; }
   justify-content: center;
   gap: 4px;
   height: 100%;
-  overflow: hidden;
-  padding: 0 10px;
+  overflow: visible;
+  padding: 0 12px;
 }
 
 .minimap-bar {
-  width: 24px;
+  width: 20px;
   height: 5px;
   border-radius: 3px;
   cursor: pointer;
   flex-shrink: 0;
-  transition: width 0.15s ease, height 0.15s ease, border-radius 0.15s ease,
-    opacity 0.15s ease, background 0.15s ease;
+  transition: width 0.12s ease, height 0.12s ease, border-radius 0.12s ease,
+    opacity 0.12s ease, background 0.12s ease;
   transform-origin: center center;
-  opacity: var(--opacity, 0.3);
-  width: calc(24px * var(--scale-w, 1));
+  opacity: var(--opacity, 0.25);
+  width: calc(20px * var(--scale-w, 1));
   height: calc(5px * var(--scale-h, 1));
   border-radius: calc(3px * var(--scale-h, 1));
+  max-width: 36px;
 }
 
 .minimap-bar.user {

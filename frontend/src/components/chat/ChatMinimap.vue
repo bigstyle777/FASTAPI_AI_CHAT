@@ -61,9 +61,9 @@ function recalcScales(myY: number) {
     const ease = t * t * (3 - 2 * t)
 
     newScales[id] = {
-      width: 1.0 + ease * 2.8,
-      height: 1.0 + ease * 3.5,
-      opacity: 0.3 + ease * 0.7,
+      width: 1.0 + ease * 0.8,
+      height: 1.0 + ease * 2.0,
+      opacity: 0.25 + ease * 0.75,
     }
 
     if (dist < bestDist) {
@@ -112,7 +112,7 @@ function handleMouseLeave() {
 }
 
 function getScale(msgId: number) {
-  return barScales[msgId] ?? { width: 1.0, height: 1.0, opacity: 0.3 }
+  return barScales[msgId] ?? { width: 1.0, height: 1.0, opacity: 0.25 }
 }
 
 const hoveredMsg = computed(() => {
