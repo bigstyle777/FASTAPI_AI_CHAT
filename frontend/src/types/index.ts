@@ -288,3 +288,30 @@ export interface UploadErrorEvent {
 }
 
 export type UploadSSEEvent = UploadProgressEvent | UploadDoneEvent | UploadErrorEvent
+
+// ===== 用户记忆相关类型 =====
+/** 单条记忆（前端统一使用 id，api 层负责将后端 memory_id 归一化） */
+export interface MemoryItem {
+  id: number
+  content: string
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface MemoryListResponse {
+  success: boolean
+  memories: MemoryItem[]
+}
+
+export interface MemoryMutationResponse {
+  success: boolean
+  memory: MemoryItem
+}
+
+export interface MemoryCreateRequest {
+  content: string
+}
+
+export interface MemoryUpdateRequest {
+  content: string
+}

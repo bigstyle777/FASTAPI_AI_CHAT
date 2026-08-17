@@ -3,7 +3,7 @@ from ...core.database import SessionLocal
 from .title import generate_session_title
 
 
-@celery_app.task
+@celery_app.task(name="app.services.task.title_tasks.generate_session_title_task")
 def generate_session_title_task(session_id: int, message: str, user_id: int):
     db = SessionLocal()
     try:

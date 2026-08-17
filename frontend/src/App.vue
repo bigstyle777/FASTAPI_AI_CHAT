@@ -3,6 +3,7 @@ import { onMounted, watch } from 'vue'
 import { useThemeStore } from '@/stores/theme'
 import { useAuthStore } from '@/stores/auth'
 import { useRouter } from 'vue-router'
+import { Toaster } from '@/components/ui/sonner'
 
 const themeStore = useThemeStore()
 const authStore = useAuthStore()
@@ -36,4 +37,6 @@ watch(
 
 <template>
   <RouterView />
+  <!-- 全局 Toast 提示（成功 / 报错），页面通过 vue-sonner 的 toast() 调用 -->
+  <Toaster />
 </template>

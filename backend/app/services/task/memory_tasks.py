@@ -10,7 +10,7 @@ from ..memory_embedding import embed_memory
 logger = logging.getLogger(__name__)
 
 
-@celery_app.task
+@celery_app.task(name="app.services.task.memory_tasks.embed_memory_task")
 def embed_memory_task(memory_id: int, user_id: int):
     """后台为单条 memory 生成句子向量并落库。"""
     db = SessionLocal()
@@ -27,7 +27,7 @@ def embed_memory_task(memory_id: int, user_id: int):
         db.close()
 
 
-@celery_app.task
+@celery_app.task(name="app.services.task.memory_tasks.extract_and_save_memory_task")
 def extract_and_save_memory_task(user_id: int, message: str):
     """后台从消息中提取记忆并保存；保存时自动派发向量化任务。"""
     # 延迟导入，避免模块加载时的循环依赖

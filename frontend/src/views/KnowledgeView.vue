@@ -180,6 +180,10 @@ onMounted(async () => {
           <span class="nav-icon">库</span>
           <span class="nav-label">知识库</span>
         </button>
+        <button class="nav-item" type="button" title="记忆" @click="router.push('/memory')">
+          <span class="nav-icon">忆</span>
+          <span class="nav-label">记忆</span>
+        </button>
         <button
           v-if="isAdmin"
           class="nav-item"

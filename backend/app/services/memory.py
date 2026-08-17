@@ -3,8 +3,8 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from app.services.llm import _get_client, _get_user_ai_settings
-from app.services.task.memory_queue import enqueue_memory_embedding
+from .llm import _get_client, _get_user_ai_settings
+from .task.memory_queue import enqueue_memory_embedding
 
 from ..crud import (
     create_memory,

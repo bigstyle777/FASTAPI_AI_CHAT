@@ -8,7 +8,7 @@
 from typing import Any, Generator
 
 from ..schemas import StreamDeltaEvent, StreamErrorEvent, StreamUsageEvent, TokenUsage
-from ..tools import TOOL_REGISTRY
+from ..tools import ALL_TOOLS
 from .events import AgentPlanEvent, AgentStepEvent
 from .executor import execute_step
 from .finalizer import stream_final_answer
@@ -50,8 +50,6 @@ def run_agent_stream(
     """Agent 主循环。yield 的事件由上层转成 SSE。"""
     if tracer is None:
         tracer = NullTracer()
-    available_tools = sorted(TOOL_REGISTRY)
-
     # ---- 1. 规划 ----
     try:
         with tracer.span(
@@ -63,7 +61,7 @@ def run_agent_stream(
                 client,
                 model,
                 messages,
-                available_tools=available_tools,
+                available_tools=ALL_TOOLS,  # type: ignore
                 max_steps=max_steps,
             )
             record.set({"steps": [step.model_dump() for step in plan]})
@@ -78,7 +76,9 @@ def run_agent_stream(
             status="failed",
             error_message="规划器未生成任何步骤",
         )
-        yield StreamErrorEvent(message="Agent 未能为任务生成计划，请换一种表达方式再试。")
+        yield StreamErrorEvent(
+            message="Agent 未能为任务生成计划，请换一种表达方式再试。"
+        )
         return
 
     yield AgentPlanEvent(
@@ -127,7 +127,9 @@ def run_agent_stream(
         if result.status == "completed" and result.output:
             execution_log.append(f"{index + 1}. {step.description}: {result.output}")
         else:
-            execution_log.append(f"{index + 1}. {step.description}: 失败 - {result.error}")
+            execution_log.append(
+                f"{index + 1}. {step.description}: 失败 - {result.error}"
+            )
 
         # 执行过程中产生的工具事件（agent_tool）在步骤结束后统一推送
         for event in tracer.drain_events():

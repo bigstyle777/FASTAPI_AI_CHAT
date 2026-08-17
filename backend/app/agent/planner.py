@@ -8,6 +8,23 @@ from .prompts import PLANNER_SYSTEM_PROMPT
 from .state import PlanStep
 
 
+def _render_tools(tools) -> str:
+    """把工具 Schema 渲染成提示词里的文本，防止模型编造参数名。"""
+    entries = []
+    for tool in tools or []:
+        if isinstance(tool, str):
+            fn = {"name": tool, "description": "", "parameters": {}}
+        else:
+            fn = tool.get("function", {}) if isinstance(tool, dict) else {}
+            fn = {
+                "name": fn.get("name", ""),
+                "description": fn.get("description", ""),
+                "parameters": fn.get("parameters", {}),
+            }
+        entries.append(json.dumps(fn, ensure_ascii=False))
+    return "\n".join(f"- {entry}" for entry in entries)
+
+
 def _extract_json(text: str) -> dict[str, Any]:
     """从 LLM 返回内容里稳妥地取出 JSON 对象（容忍 ```json 围栏和前后废话）。"""
     content = text.strip()
@@ -33,11 +50,11 @@ def create_plan(
     max_steps: int = 6,
 ) -> list[PlanStep]:
     """调用 LLM 生成计划，并校验成 PlanStep 列表。"""
-    tool_names = ", ".join(available_tools or [])
+    tool_schemas = _render_tools(available_tools)
     system_message = {
         "role": "system",
         "content": PLANNER_SYSTEM_PROMPT.format(
-            tools=tool_names or "（当前没有可用工具，所有步骤 tool 留空）",
+            tools=tool_schemas or "（当前没有可用工具，所有步骤 tool 留空）",
             max_steps=max_steps,
         ),
     }
@@ -48,7 +65,6 @@ def create_plan(
         "temperature": 0.2,
     }
 
-    # 部分兼容接口不支持 response_format，失败时去掉再重试一次
     try:
         kwargs["response_format"] = {"type": "json_object"}
         response = client.chat.completions.create(**kwargs)

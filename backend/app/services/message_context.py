@@ -1,4 +1,4 @@
-from app.rag.prompts import build_context_message
+from ..rag.prompts import build_context_message
 
 from ..crud import (
     get_last_message_by_session,

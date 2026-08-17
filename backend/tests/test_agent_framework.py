@@ -245,6 +245,35 @@ def test_execute_direct_tool_with_trace():
     assert tool_points[1]["duration_ms"] is not None
 
 
+def test_direct_tool_failure_self_heals_via_llm():
+    """工具参数错误时，应带着错误信息走一次 LLM 自愈，而不是直接失败。"""
+    client = make_client()
+    tracer = StubTracer(run_id=8)
+    step = PlanStep(
+        description="计算 (15+7)*2",
+        tool="calculator",
+        args={"expression": "(15+7)*2"},  # 模型编造的错误参数
+    )
+    result = execute_step(
+        client,
+        "fake-model",
+        step,
+        index=0,
+        tracer=tracer,
+    )
+    # 直接调用失败后，LLM 路径兜底并给出步骤输出
+    assert result.status == "completed"
+    assert result.output == "已完成"
+
+    tool_events = tracer.drain_events()
+    assert [e.type for e in tool_events] == ["agent_tool", "agent_tool"]
+    assert tool_events[1].status == "failed"
+
+    llm_spans = [p for p in tracer.points if p["stage"] == "llm"]
+    assert len(llm_spans) == 2  # started + completed
+    assert llm_spans[1]["status"] == "completed"
+
+
 def test_execute_step_via_llm():
     client = make_client()
     tracer = StubTracer()
@@ -356,6 +385,7 @@ def main():
         test_create_plan_validates_steps,
         test_create_plan_falls_back_without_response_format,
         test_execute_direct_tool_with_trace,
+        test_direct_tool_failure_self_heals_via_llm,
         test_execute_step_via_llm,
         test_run_agent_stream_event_sequence,
         test_run_agent_non_stream,

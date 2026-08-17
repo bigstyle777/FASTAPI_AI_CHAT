@@ -2,6 +2,87 @@
    AI Chat Pro — Modern Tech Design System
    ============================================================ */
 
+/* ---- Tailwind v4（不引入 preflight，避免重置现有页面全局样式） ---- */
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
+@import 'tw-animate-css';
+@source '../';
+
+/* dark: 变体挂到 data-theme 属性（与主题 store 的切换方式一致） */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+/* ---- shadcn-vue 主题变量（柔和蓝紫，匹配 data-theme 暗色切换） ---- */
+:root {
+  --background: oklch(0.985 0.005 270);
+  --foreground: oklch(0.21 0.03 265);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.21 0.03 265);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.21 0.03 265);
+  --primary: oklch(0.58 0.17 275);
+  --primary-foreground: oklch(0.985 0.005 270);
+  --secondary: oklch(0.955 0.012 275);
+  --secondary-foreground: oklch(0.33 0.05 270);
+  --muted: oklch(0.955 0.012 275);
+  --muted-foreground: oklch(0.52 0.025 270);
+  --accent: oklch(0.94 0.03 280);
+  --accent-foreground: oklch(0.38 0.09 275);
+  --destructive: oklch(0.6 0.21 22);
+  --destructive-foreground: oklch(0.985 0.005 270);
+  --border: oklch(0.91 0.015 275);
+  --input: oklch(0.91 0.015 275);
+  --ring: oklch(0.58 0.17 275);
+  --radius: 0.75rem;
+}
+
+[data-theme='dark'] {
+  --background: oklch(0.16 0.02 270);
+  --foreground: oklch(0.93 0.01 270);
+  --card: oklch(0.2 0.025 272);
+  --card-foreground: oklch(0.93 0.01 270);
+  --popover: oklch(0.2 0.025 272);
+  --popover-foreground: oklch(0.93 0.01 270);
+  --primary: oklch(0.68 0.16 280);
+  --primary-foreground: oklch(0.16 0.02 270);
+  --secondary: oklch(0.27 0.03 272);
+  --secondary-foreground: oklch(0.9 0.01 270);
+  --muted: oklch(0.27 0.03 272);
+  --muted-foreground: oklch(0.68 0.02 272);
+  --accent: oklch(0.32 0.05 280);
+  --accent-foreground: oklch(0.88 0.05 280);
+  --destructive: oklch(0.65 0.19 22);
+  --destructive-foreground: oklch(0.16 0.02 270);
+  --border: oklch(0.3 0.03 272);
+  --input: oklch(0.3 0.03 272);
+  --ring: oklch(0.68 0.16 280);
+}
+
+/* 将 tailwind 颜色 token 映射到 shadcn 变量 */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+}
+
 *,
 *::before,
 *::after {
@@ -81,27 +162,29 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-button,
-input,
-select,
-textarea {
-  font: inherit;
-}
+/* 放入 @layer base，避免压制 Tailwind utilities（如 shadcn Button 的 border） */
+@layer base {
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
 
-button {
-  border: 0;
-}
+  button {
+    border: 0;
+  }
 
-button:disabled {
-  cursor: wait;
-  opacity: 0.6;
+  button:disabled {
+    cursor: wait;
+    opacity: 0.6;
+  }
 }
 
 /* ============================================================
    Auth Pages (Login / Register / Profile)
    ============================================================ */
-.login-page,
-.profile-page {
+.login-page {
   min-height: 100vh;
   display: flex;
   align-items: center;
@@ -114,8 +197,7 @@ button:disabled {
     var(--bg);
 }
 
-.login-card,
-.profile-container {
+.login-card {
   width: min(100%, 440px);
   background: var(--panel-glass);
   border: 1px solid rgba(226, 232, 240, 0.8);
@@ -179,8 +261,7 @@ button:disabled {
   box-shadow: 0 8px 28px rgba(217, 178, 60, 0.3);
 }
 
-.login-card h1,
-.profile-container h1 {
+.login-card h1 {
   font-size: 26px;
   line-height: 1.15;
   font-weight: 700;
@@ -642,7 +723,6 @@ button:disabled {
 }
 
 .ghost-btn,
-.back-btn,
 .toggle-btn {
   height: 38px;
   border-radius: var(--radius-sm);
@@ -1186,41 +1266,39 @@ button:disabled {
 }
 
 /* ============================================================
-   Profile
+   Profile（布局复用 knowledge-page，此处仅定义主区卡片）
    ============================================================ */
-.profile-container {
-  width: min(100%, 560px);
+.profile-main {
+  max-width: 720px;
 }
 
-.back-btn {
-  padding: 0 14px;
+.profile-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 24px 28px;
   margin-bottom: 20px;
-  background: var(--panel-soft);
-  color: var(--text);
+  box-shadow: var(--shadow-sm);
 }
 
-.back-btn:hover,
-.toggle-btn:hover {
-  background: var(--border);
-}
-
-.profile-section {
-  margin-top: 28px;
-  padding-top: 24px;
-  border-top: 1px solid var(--border);
-}
-
-.profile-section h2 {
+.profile-card h2 {
   font-size: 16px;
   margin-bottom: 16px;
   font-weight: 700;
 }
 
-.section-hint {
-  margin: -8px 0 16px;
-  font-size: 12px;
-  color: var(--text-secondary, #888);
-  line-height: 1.5;
+.profile-card .form-group:last-of-type {
+  margin-bottom: 0;
+}
+
+.profile-card-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 24px;
+}
+
+.toggle-btn:hover {
+  background: var(--border);
 }
 
 .info-row {
@@ -2298,6 +2376,10 @@ button:disabled {
   .stats-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .knowledge-main {
+    padding: 20px 24px;
+  }
 }
 
 @media (max-width: 860px) {
@@ -2355,6 +2437,82 @@ button:disabled {
   .stats-grid {
     grid-template-columns: 1fr;
   }
+
+  .page-header {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .page-header h1 {
+    font-size: 20px;
+  }
+
+  .upload-inner {
+    flex-direction: column;
+    text-align: center;
+    gap: 12px;
+  }
+
+  .search-bar {
+    flex-wrap: wrap;
+  }
+
+  .memory-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .profile-main {
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .login-card {
+    padding: 24px 20px;
+  }
+
+  .login-card h1 {
+    font-size: 22px;
+  }
+
+  .knowledge-main {
+    padding: 14px;
+  }
+
+  .page-header h1 {
+    font-size: 18px;
+  }
+
+  .stat-card {
+    padding: 14px;
+  }
+
+  .stat-info strong {
+    font-size: 18px;
+  }
+
+  .chat-header {
+    padding: 10px 14px;
+  }
+
+  .chat-header h1 {
+    font-size: 16px;
+  }
+
+  .input-area {
+    padding: 10px 14px 14px;
+    gap: 8px;
+  }
+
+  .chat-input {
+    height: 42px;
+    font-size: 14px;
+  }
+
+  .send-btn {
+    height: 42px;
+    font-size: 13px;
+  }
 }
 
 /* ============================================================
@@ -2396,16 +2554,14 @@ button:disabled {
   background: var(--bg);
 }
 
-[data-theme="dark"] .login-page,
-[data-theme="dark"] .profile-page {
+[data-theme="dark"] .login-page {
   background:
     radial-gradient(ellipse 80% 60% at 20% 20%, rgba(56, 189, 248, 0.06), transparent),
     radial-gradient(ellipse 60% 50% at 80% 80%, rgba(139, 92, 246, 0.05), transparent),
     var(--bg);
 }
 
-[data-theme="dark"] .login-card,
-[data-theme="dark"] .profile-container {
+[data-theme="dark"] .login-card {
   background: var(--panel-glass);
   border-color: var(--border);
 }
@@ -2449,13 +2605,11 @@ button:disabled {
   background: linear-gradient(135deg, var(--accent), #8b5cf6);
 }
 
-[data-theme="dark"] .back-btn,
 [data-theme="dark"] .toggle-btn {
   background: var(--panel-soft);
   color: var(--text);
 }
 
-[data-theme="dark"] .back-btn:hover,
 [data-theme="dark"] .toggle-btn:hover {
   background: var(--border);
 }
@@ -2594,4 +2748,728 @@ button:disabled {
 
 [data-theme="dark"] .doc-model {
   background: var(--panel-soft);
+}
+
+/* ---- 暗色：Admin 面板 ---- */
+[data-theme="dark"] .admin-view {
+  background: var(--bg);
+}
+
+[data-theme="dark"] .stat-box {
+  background: var(--panel);
+  border-color: var(--border);
+}
+
+[data-theme="dark"] .admin-panel {
+  background: var(--panel);
+  border-color: var(--border);
+}
+
+[data-theme="dark"] .admin-table th {
+  color: var(--text-muted);
+}
+
+[data-theme="dark"] .admin-table td {
+  color: var(--text-secondary);
+}
+
+[data-theme="dark"] .admin-input,
+[data-theme="dark"] .admin-select,
+[data-theme="dark"] .admin-textarea,
+[data-theme="dark"] .inline-select {
+  background: var(--panel-soft);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+[data-theme="dark"] .check-row {
+  background: var(--panel-soft);
+  border-color: var(--border);
+}
+
+[data-theme="dark"] .check-row strong {
+  color: var(--text);
+}
+
+[data-theme="dark"] .secondary-action {
+  background: var(--panel-soft);
+  color: var(--text);
+}
+
+[data-theme="dark"] .secondary-action:hover {
+  background: var(--border);
+}
+
+/* ---- 暗色：Profile 卡片 ---- */
+[data-theme="dark"] .profile-card {
+  background: var(--panel);
+  border-color: var(--border);
+}
+
+[data-theme="dark"] .profile-card h2 {
+  color: var(--text);
+}
+
+[data-theme="dark"] .info-row {
+  border-bottom-color: var(--border);
+}
+
+[data-theme="dark"] .info-row label {
+  color: var(--text-muted);
+}
+
+[data-theme="dark"] .info-row span {
+  color: var(--text);
+}
+
+/* ---- 暗色：Modal 弹窗 ---- */
+[data-theme="dark"] .modal-overlay {
+  background: rgba(0, 0, 0, 0.55);
+}
+
+[data-theme="dark"] .modal-card {
+  background: var(--panel);
+  border-color: var(--border);
+}
+
+[data-theme="dark"] .modal-card h3 {
+  color: var(--text);
+}
+
+[data-theme="dark"] .modal-input {
+  background: var(--panel-soft);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+[data-theme="dark"] .modal-btn.ghost {
+  background: var(--panel-soft);
+  color: var(--text);
+}
+
+[data-theme="dark"] .modal-btn.ghost:hover:not(:disabled) {
+  background: var(--border);
+}
+
+/* ---- 暗色：Context Menu ---- */
+[data-theme="dark"] .context-menu {
+  background: var(--panel);
+  border-color: var(--border);
+}
+
+[data-theme="dark"] .context-menu-item {
+  color: var(--text);
+}
+
+[data-theme="dark"] .context-menu-item:hover {
+  background: var(--panel-soft);
+}
+
+/* ---- 暗色：记忆卡片 ---- */
+[data-theme="dark"] .memory-create-card {
+  background: var(--panel);
+  border-color: var(--border);
+}
+
+[data-theme="dark"] .memory-card {
+  background: var(--panel);
+  border-color: var(--border);
+}
+
+[data-theme="dark"] .memory-card::before {
+  background: var(--border);
+}
+
+[data-theme="dark"] .memory-card:hover {
+  border-color: var(--accent);
+}
+
+[data-theme="dark"] .memory-card:hover::before {
+  background: var(--accent);
+}
+
+[data-theme="dark"] .memory-content {
+  color: var(--text);
+}
+
+[data-theme="dark"] .memory-meta {
+  border-top-color: var(--border);
+  color: var(--text-faint);
+}
+
+[data-theme="dark"] .memory-textarea {
+  color: var(--text);
+}
+
+[data-theme="dark"] .memory-textarea::placeholder {
+  color: var(--text-faint);
+}
+
+[data-theme="dark"] .memory-delete-preview {
+  background: var(--panel-soft);
+  border-color: var(--border);
+  color: var(--text-secondary);
+}
+
+[data-theme="dark"] .skeleton-line {
+  background: linear-gradient(90deg, var(--panel-soft) 25%, var(--border) 50%, var(--panel-soft) 75%);
+}
+
+/* ---- 暗色：Panel-head ---- */
+[data-theme="dark"] .panel-head h2 {
+  color: var(--text);
+}
+
+/* ---- 暗色：表单元素 ---- */
+[data-theme="dark"] .form-group input,
+[data-theme="dark"] .form-group select {
+  background: var(--panel-soft);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+[data-theme="dark"] .form-group input:focus,
+[data-theme="dark"] .form-group select:focus {
+  border-color: var(--accent);
+  background: var(--panel);
+}
+
+/* ============================================================
+   Brand Mode Toggle (AIChatPro / Work) — 分段式胶囊切换
+   ============================================================ */
+.brand-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  gap: 2px;
+}
+
+.mode-segment {
+  position: relative;
+  padding: 4px 12px;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: rgba(248, 250, 252, 0.55);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast);
+  white-space: nowrap;
+  font-family: inherit;
+}
+
+.mode-segment.active {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(14, 165, 233, 0.35), 0 0 0 1px rgba(14, 165, 233, 0.2);
+}
+
+.mode-segment:hover:not(.active) {
+  color: rgba(248, 250, 252, 0.85);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.mode-segment:active:not(.active) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* ============================================================
+   Memory Page
+   ============================================================ */
+.memory-main {
+  gap: 28px;
+}
+
+/* ---- 新增记忆卡片 ---- */
+.memory-create-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--panel);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow var(--transition), border-color var(--transition);
+}
+
+.memory-create-card:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow), var(--shadow-md);
+}
+
+.memory-create-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.01em;
+}
+
+.memory-create-label::before {
+  content: '';
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent-glow);
+}
+
+.memory-textarea {
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: vertical;
+  min-height: 68px;
+  background: transparent;
+  color: var(--text);
+  font-size: 14.5px;
+  line-height: 1.75;
+  font-family: inherit;
+}
+
+.memory-textarea::placeholder {
+  color: var(--text-faint);
+}
+
+.memory-textarea.edit {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-soft);
+  padding: 12px 14px;
+  font-size: 14px;
+  min-height: 100px;
+  line-height: 1.7;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.memory-textarea.edit:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.memory-create-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.memory-char-count {
+  font-size: 12px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 提交按钮 —— 统一使用 accent 色，不混入紫色 */
+.memory-submit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 18px;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: #fff;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+
+.memory-submit-btn:hover:not(:disabled) {
+  background: var(--accent-deep);
+  box-shadow: 0 4px 14px var(--accent-glow);
+  transform: translateY(-1px);
+}
+
+.memory-submit-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.memory-submit-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+/* 按钮 loading 小圆环 */
+.btn-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ---- 记忆卡片网格 ---- */
+.memory-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+/* 卡片本体 —— 固态面板，左侧细 accent 条，hover 时亮起 */
+.memory-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px 20px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow var(--transition), border-color var(--transition), transform var(--transition);
+  animation: memory-fade-in 0.4s ease both;
+}
+
+/* 左侧装饰条 */
+.memory-card::before {
+  content: '';
+  position: absolute;
+  inset: -1px auto -1px -1px;
+  width: 3px;
+  border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+  background: var(--border);
+  transition: background var(--transition), width var(--transition);
+}
+
+.memory-card:hover {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
+.memory-card:hover::before {
+  background: var(--accent);
+  width: 4px;
+}
+
+.memory-card.editing {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow), var(--shadow-md);
+}
+
+.memory-card.editing::before {
+  background: var(--accent);
+}
+
+@keyframes memory-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 卡片内容 */
+.memory-content {
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  flex: 1;
+}
+
+/* 时间元信息 */
+.memory-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+/* 卡片底部操作栏 —— 始终可见，不再 hover 浮现 */
+.memory-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.memory-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.memory-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.memory-action-btn:hover {
+  background: var(--panel-soft);
+  color: var(--accent);
+  border-color: var(--border);
+}
+
+.memory-action-btn.danger:hover {
+  color: var(--danger);
+  background: var(--danger-bg);
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+/* 编辑模式底部 */
+.memory-edit-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.memory-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.memory-edit-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* ---- 骨架屏 ---- */
+.skeleton-card {
+  pointer-events: none;
+}
+
+.skeleton-card::before {
+  display: none;
+}
+
+.skeleton-line {
+  height: 14px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--panel-soft) 25%, var(--border) 50%, var(--panel-soft) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+.skeleton-line.short {
+  margin-top: 6px;
+  height: 10px;
+}
+
+.skeleton-line.w-90 { width: 90%; }
+.skeleton-line.w-70 { width: 70%; }
+.skeleton-line.w-50 { width: 50%; }
+.skeleton-line.w-40 { width: 40%; }
+
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ---- 空状态 ---- */
+.memory-empty-state {
+  margin: 56px auto 0;
+  width: min(100%, 420px);
+  text-align: center;
+  color: var(--text-muted);
+  animation: memory-fade-in 0.45s ease both;
+}
+
+.memory-empty-icon {
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  margin: 0 auto 20px;
+  border-radius: 18px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-size: 26px;
+  font-weight: 700;
+  border: 1px solid rgba(14, 165, 233, 0.15);
+}
+
+.memory-empty-state h2,
+.memory-error-state h2 {
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  letter-spacing: -0.01em;
+}
+
+.memory-empty-state p,
+.memory-error-state p {
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--text-muted);
+}
+
+/* ---- 错误态 ---- */
+.memory-error-state {
+  margin: 56px auto 0;
+  width: min(100%, 420px);
+  text-align: center;
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  animation: memory-fade-in 0.35s ease both;
+}
+
+.memory-error-icon {
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: 24px;
+  font-weight: 800;
+}
+
+/* ---- 删除确认弹窗 ---- */
+.memory-delete-preview {
+  max-height: 100px;
+  overflow: auto;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--panel-soft);
+  color: var(--text-secondary);
+  font-size: 13.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid var(--border);
+}
+
+.memory-delete-hint {
+  margin-top: 10px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.modal-btn.danger-solid {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--danger);
+  color: #fff;
+}
+
+.modal-btn.danger-solid:hover:not(:disabled) {
+  background: #dc2626;
+}
+
+.modal-btn.primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 全局 Toast */
+.toast-stack {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 1500;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.toast-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 220px;
+  max-width: 360px;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: var(--shadow-lg);
+  animation: toast-slide-in 0.28s ease both;
+}
+
+.toast-item.success .toast-icon {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.toast-item.error .toast-icon {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.toast-icon {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+@keyframes toast-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* 响应式：窄屏适配 */
+@media (max-width: 720px) {
+  .memory-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .memory-main {
+    padding: 20px 16px;
+  }
+
+  .toast-stack {
+    left: 16px;
+    right: 16px;
+    align-items: stretch;
+  }
+
+  .toast-item {
+    max-width: none;
+  }
 }

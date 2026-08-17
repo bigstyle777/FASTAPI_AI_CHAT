@@ -155,10 +155,19 @@ def _execute_with_llm(
     tracer,
     execution_log: list[str],
     max_tool_turns: int,
+    tool_error: str | None = None,
 ) -> StepResult:
     on_tool_call, on_tool_result = _tool_callbacks(tracer, index)
     system_message = {"role": "system", "content": STEP_EXECUTOR_SYSTEM_PROMPT}
-    user_message = {"role": "user", "content": _build_step_prompt(step, execution_log)}
+    prompt = _build_step_prompt(step, execution_log)
+    if tool_error:
+        prompt += (
+            "\n\n注意：直接调用工具失败，错误信息如下。"
+            "请对照工具 schema 修正参数后重新调用；"
+            "如果确实无法完成，基于已有信息给出当前结论。\n"
+            f"{tool_error}"
+        )
+    user_message = {"role": "user", "content": prompt}
 
     with tracer.span(
         "llm",
@@ -214,7 +223,21 @@ def execute_step(
     if tracer is None:
         tracer = NullTracer()
     if step.tool and step.tool in TOOL_REGISTRY:
-        return _execute_direct_tool(step, index, context, tracer)
+        result = _execute_direct_tool(step, index, context, tracer)
+        if result.status == "failed" and result.error:
+            # 自愈：工具调用失败（通常是参数错误），带着错误信息让 LLM 重试一次
+            return _execute_with_llm(
+                client,
+                model,
+                step,
+                index,
+                context,
+                tracer,
+                execution_log or [],
+                max_tool_turns,
+                tool_error=result.error,
+            )
+        return result
     return _execute_with_llm(
         client,
         model,

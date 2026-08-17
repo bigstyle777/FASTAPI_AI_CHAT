@@ -3,11 +3,12 @@ import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import vueDevTools from 'vite-plugin-vue-devtools'
+import tailwindcss from '@tailwindcss/vite'
 
 // SPA 回退：仅对前端路由返回 index.html
 // 避免 Vite 代理将这些路由转发到后端
 function spaFallbackPlugin() {
-  const SPA_ROUTES = new Set(['/', '/chat', '/login', '/profile', '/admin', '/knowledge'])
+  const SPA_ROUTES = new Set(['/', '/chat', '/login', '/profile', '/admin', '/knowledge', '/memory'])
   return {
     name: 'spa-fallback',
     configureServer(server: any) {
@@ -24,11 +25,7 @@ function spaFallbackPlugin() {
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [
-    vue(),
-    vueDevTools(),
-    spaFallbackPlugin(),
-  ],
+  plugins: [tailwindcss(), vue(), vueDevTools(), spaFallbackPlugin()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
@@ -50,6 +47,14 @@ export default defineConfig({
         changeOrigin: true,
       },
       '/rag': {
+        target: 'http://127.0.0.1:8001',
+        changeOrigin: true,
+      },
+      '/memories': {
+        target: 'http://127.0.0.1:8001',
+        changeOrigin: true,
+      },
+      '/agent': {
         target: 'http://127.0.0.1:8001',
         changeOrigin: true,
       },

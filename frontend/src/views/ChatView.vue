@@ -52,7 +52,12 @@ function handleSend() {
   const text = messageInput.value.trim()
   if (!text) return
   messageInput.value = ''
-  chatStore.sendMessage(text)
+  // Work 模式走 agent 接口（/agent/stream），AIChatPro 走普通对话接口
+  if (uiStore.chatMode === 'work') {
+    chatStore.sendAgentMessage(text)
+  } else {
+    chatStore.sendMessage(text)
+  }
 }
 
 function handleInputKeydown(event: KeyboardEvent) {
@@ -140,8 +145,19 @@ watch(
         <div class="brand-row">
           <img src="/logo.png" class="brand-logo small" alt="AI Chat Pro">
           <div class="brand-text">
-            <h2>AI Chat Pro</h2>
-            <p>智能对话工作台</p>
+            <div class="brand-mode-toggle">
+              <button
+                :class="['mode-segment', { active: uiStore.chatMode === 'aichatpro' }]"
+                type="button"
+                @click="uiStore.setChatMode('aichatpro')"
+              >AIChatPro</button>
+              <button
+                :class="['mode-segment', { active: uiStore.chatMode === 'work' }]"
+                type="button"
+                @click="uiStore.setChatMode('work')"
+              >Work</button>
+            </div>
+            <p>{{ uiStore.chatMode === 'work' ? 'Agent 任务工作台' : '智能对话工作台' }}</p>
           </div>
           <button
             class="sidebar-toggle"
@@ -183,6 +199,10 @@ watch(
           <button class="nav-item" type="button" title="知识库" @click="router.push('/knowledge')">
             <span class="nav-icon">◈</span>
             <span class="nav-label">知识库</span>
+          </button>
+          <button class="nav-item" type="button" title="记忆" @click="router.push('/memory')">
+            <span class="nav-icon">✦</span>
+            <span class="nav-label">记忆</span>
           </button>
           <button v-if="isAdmin" class="nav-item" type="button" title="管理员中心" @click="router.push('/admin')">
             <span class="nav-icon">⚙</span>

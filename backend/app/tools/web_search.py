@@ -17,9 +17,7 @@ client = TavilyClient(api_key=settings.tavily_api_key)
 
 def web_search(query: str) -> dict:
     response = client.search(
-        query=query,
-        search_depth="basic",
-        max_results=5,
+        query=query, search_depth="basic", max_results=5, include_answer=True
     )
 
     return {
@@ -29,6 +27,7 @@ def web_search(query: str) -> dict:
                 "title": result.get("title"),
                 "url": result.get("url"),
                 "content": result.get("content"),
+                "answer": result.get("answer"),
             }
             for result in response.get("results", [])
         ],

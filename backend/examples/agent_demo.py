@@ -44,10 +44,12 @@ class PrintTracer(NullTracer):
     def emit(self, event):
         if getattr(event, "type", "") == "agent_tool":
             status = event.status
-            detail = (
-                f"结果={event.result}" if status == "completed" else f"错误={event.error}"
-            )
-            print(f"  [tool] {event.tool} {status}: {detail}")
+            if status == "started":
+                print(f"  [tool] {event.tool} started: args={event.arguments}")
+            elif status == "completed":
+                print(f"  [tool] {event.tool} completed: 结果={event.result}")
+            else:
+                print(f"  [tool] {event.tool} failed: 错误={event.error}")
 
 
 def main() -> None:
@@ -67,13 +69,17 @@ def main() -> None:
         model = settings.deepseek_model
 
     if not api_key:
-        print("未配置 API Key，请在项目根目录 .env 中填写 DEEPSEEK_API_KEY 或 OPENAI_API_KEY")
+        print(
+            "未配置 API Key，请在项目根目录 .env 中填写 DEEPSEEK_API_KEY 或 OPENAI_API_KEY"
+        )
         return
 
     client = OpenAI(api_key=api_key, base_url=base_url)
     tracer = PrintTracer(run_id=0)
 
     print(f"问题: {question}\n")
+
+    # 进入agent
     state: AgentState = run_agent(
         client,
         model,
@@ -84,7 +90,7 @@ def main() -> None:
 
     print("\n===== 计划 =====")
     for index, step in enumerate(state.plan, 1):
-        tool = f" -> {step.tool}" if step.tool else ""
+        tool = f" -> {step.tool}({step.args})" if step.tool else ""
         print(f"{index}. {step.description}{tool}")
 
     print("\n===== 执行结果 =====")
