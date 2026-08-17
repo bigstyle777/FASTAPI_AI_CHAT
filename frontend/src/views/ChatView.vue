@@ -8,6 +8,7 @@ import { useUiStore } from '@/stores/ui'
 import SessionItem from '@/components/chat/SessionItem.vue'
 import MessageItem from '@/components/chat/MessageItem.vue'
 import RenameModal from '@/components/chat/RenameModal.vue'
+import ChatMinimap from '@/components/chat/ChatMinimap.vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -253,27 +254,34 @@ watch(
         {{ chatStore.notice.message }}
       </div>
 
-      <div ref="messagesContainer" class="messages-container">
-        <template v-if="isInitialLoading">
-          <div class="empty-state">
+      <div class="chat-body">
+        <div ref="messagesContainer" class="messages-container">
+          <template v-if="isInitialLoading">
+            <div class="empty-state">
+              <img src="/logo.png" class="empty-logo" alt="AI Chat Pro">
+              <h2>正在加载...</h2>
+              <p>正在同步你的会话和消息记录。</p>
+            </div>
+          </template>
+          <template v-else-if="chatStore.messages.length > 0">
+            <MessageItem
+              v-for="(msg, idx) in chatStore.messages"
+              :key="msg.message_id"
+              :message="msg"
+              :is-streaming="isStreamingLast && idx === chatStore.messages.length - 1"
+            />
+          </template>
+          <div v-else class="empty-state">
             <img src="/logo.png" class="empty-logo" alt="AI Chat Pro">
-            <h2>正在加载...</h2>
-            <p>正在同步你的会话和消息记录。</p>
+            <h2>开始一段新的对话</h2>
+            <p>选择左侧会话，或者新建聊天后输入你的问题。</p>
           </div>
-        </template>
-        <template v-else-if="chatStore.messages.length > 0">
-          <MessageItem
-            v-for="(msg, idx) in chatStore.messages"
-            :key="msg.message_id"
-            :message="msg"
-            :is-streaming="isStreamingLast && idx === chatStore.messages.length - 1"
-          />
-        </template>
-        <div v-else class="empty-state">
-          <img src="/logo.png" class="empty-logo" alt="AI Chat Pro">
-          <h2>开始一段新的对话</h2>
-          <p>选择左侧会话，或者新建聊天后输入你的问题。</p>
         </div>
+
+        <ChatMinimap
+          :messages="chatStore.messages"
+          :container-ref="messagesContainer"
+        />
       </div>
 
       <div class="input-area">
