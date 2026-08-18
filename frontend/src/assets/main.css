@@ -1284,6 +1284,484 @@ h4 { font-size: 1rem; }
 }
 
 /* ============================================================
+   Agent Panel — Agent 任务执行面板（Codex/DeepSeek 风格）
+   ============================================================ */
+.agent-panel {
+  margin-bottom: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+.agent-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-soft);
+}
+
+.agent-panel-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.agent-panel-icon {
+  font-size: 18px;
+  color: var(--accent);
+  animation: none;
+}
+
+.agent-panel-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.agent-panel-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 100px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.agent-panel-badge.running {
+  background: var(--accent-subtle);
+  color: var(--accent-deep);
+}
+
+.agent-panel-badge.completed {
+  background: rgba(34, 197, 94, 0.1);
+  color: #16a34a;
+}
+
+.agent-panel-badge.stopped {
+  background: rgba(234, 179, 8, 0.1);
+  color: #ca8a04;
+}
+
+.agent-panel-badge.failed {
+  background: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
+}
+
+.agent-panel-progress {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 计划 */
+.agent-plan {
+  padding: 12px 18px;
+}
+
+.agent-plan-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  width: 100%;
+  text-align: left;
+}
+
+.agent-plan-toggle:hover {
+  color: var(--text-primary);
+}
+
+.agent-plan-arrow {
+  font-size: 10px;
+  transition: transform 0.2s ease;
+  display: inline-block;
+}
+
+.agent-plan-arrow.expanded {
+  transform: rotate(90deg);
+}
+
+.agent-plan-label {
+  font-weight: 500;
+}
+
+/* 步骤列表 */
+.agent-plan-steps {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* 步骤项 */
+.agent-step-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-soft);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  overflow: hidden;
+}
+
+.agent-step-item.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-glow);
+}
+
+.agent-step-item.completed {
+  border-color: rgba(34, 197, 94, 0.2);
+}
+
+.agent-step-item.failed {
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.agent-step-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.agent-step-header:hover {
+  background: var(--hover);
+}
+
+.agent-step-status {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 12px;
+}
+
+.agent-step-status.started {
+  color: var(--accent);
+}
+
+.agent-step-status.completed {
+  background: rgba(34, 197, 94, 0.1);
+  color: #16a34a;
+}
+
+.agent-step-status.failed {
+  background: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
+}
+
+.agent-step-status.skipped {
+  color: var(--text-muted);
+}
+
+.agent-step-status.pending {
+  color: var(--text-faint);
+}
+
+.agent-status-icon.spinner {
+  animation: agent-spin 1.2s linear infinite;
+}
+
+@keyframes agent-spin {
+  to { transform: rotate(360deg); }
+}
+
+.agent-status-icon.check {
+  font-weight: 700;
+}
+
+.agent-status-icon.fail {
+  font-weight: 700;
+}
+
+.agent-step-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-step-desc {
+  font-size: 13px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-step-tool-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 100px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+}
+
+.agent-step-expand {
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+/* 步骤详情 */
+.agent-step-detail {
+  border-top: 1px solid var(--border);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.agent-step-error {
+  font-size: 12px;
+  color: #dc2626;
+  padding: 8px 12px;
+  background: rgba(239, 68, 68, 0.06);
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(239, 68, 68, 0.15);
+}
+
+.agent-step-output {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.agent-output-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.agent-output-text {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  padding: 8px 12px;
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+/* 工具调用 */
+.agent-step-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.agent-tool-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.agent-tool-item.started {
+  border-color: var(--accent);
+}
+
+.agent-tool-item.completed {
+  border-color: rgba(34, 197, 94, 0.2);
+}
+
+.agent-tool-item.failed {
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.agent-tool-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--panel-soft);
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: left;
+}
+
+.agent-tool-header:hover {
+  background: var(--hover);
+}
+
+.agent-tool-status {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.agent-tool-status.started {
+  color: var(--accent);
+}
+
+.agent-tool-status.completed {
+  color: #16a34a;
+}
+
+.agent-tool-status.failed {
+  color: #dc2626;
+}
+
+.agent-tool-name {
+  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-primary);
+  flex: 1;
+}
+
+.agent-tool-duration {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-tool-expand {
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.agent-tool-detail {
+  border-top: 1px solid var(--border);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agent-tool-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.agent-tool-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.agent-tool-code {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--bg);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.agent-tool-code.error {
+  color: #dc2626;
+  border-color: rgba(239, 68, 68, 0.2);
+  background: rgba(239, 68, 68, 0.04);
+}
+
+.agent-tool-error {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Dark mode */
+[data-theme="dark"] .agent-panel {
+  background: var(--panel);
+  border-color: var(--border);
+}
+
+[data-theme="dark"] .agent-panel-header {
+  background: var(--panel-soft);
+}
+
+[data-theme="dark"] .agent-panel-badge.running {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+[data-theme="dark"] .agent-panel-badge.completed {
+  background: rgba(34, 197, 94, 0.12);
+  color: #22c55e;
+}
+
+[data-theme="dark"] .agent-panel-badge.stopped {
+  background: rgba(234, 179, 8, 0.12);
+  color: #eab308;
+}
+
+[data-theme="dark"] .agent-panel-badge.failed {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+}
+
+[data-theme="dark"] .agent-step-item {
+  background: var(--panel-soft);
+}
+
+[data-theme="dark"] .agent-step-status.completed {
+  background: rgba(34, 197, 94, 0.12);
+  color: #22c55e;
+}
+
+[data-theme="dark"] .agent-step-status.failed {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+}
+
+[data-theme="dark"] .agent-step-error {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+[data-theme="dark"] .agent-tool-code.error {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.06);
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+/* ============================================================
    Chat Minimap — 消息导航小地图（透明 + 磁吸缩放）
    ============================================================ */
 .chat-body {

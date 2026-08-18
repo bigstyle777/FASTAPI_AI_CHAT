@@ -9,6 +9,7 @@ import SessionItem from '@/components/chat/SessionItem.vue'
 import MessageItem from '@/components/chat/MessageItem.vue'
 import RenameModal from '@/components/chat/RenameModal.vue'
 import ChatMinimap from '@/components/chat/ChatMinimap.vue'
+import AgentPanel from '@/components/chat/AgentPanel.vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -264,6 +265,8 @@ watch(
             </div>
           </template>
           <template v-else-if="chatStore.messages.length > 0">
+            <!-- Work 模式：Agent 任务执行面板 -->
+            <AgentPanel v-if="uiStore.chatMode === 'work'" />
             <MessageItem
               v-for="(msg, idx) in chatStore.messages"
               :key="msg.message_id"
