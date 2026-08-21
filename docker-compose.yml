@@ -133,7 +133,7 @@ services:
       dockerfile: backend/Dockerfile
     image: aichat-backend
     container_name: aichat-worker
-    command: celery -A backend.app.core.celery_worker worker --loglevel=INFO
+    command: celery -A backend.app.core.celery_worker worker --loglevel=INFO --concurrency=4 --max-tasks-per-child=100 --max-memory-per-child=300000
     environment:
       DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD}@db:5432/aichat
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0

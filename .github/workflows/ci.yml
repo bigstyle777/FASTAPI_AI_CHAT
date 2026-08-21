@@ -1,0 +1,92 @@
+# CI：在合入 main 前，用机器验证三堵独立的墙不塌。
+# 1) 后端测试（依赖 Postgres+pgvector；Redis 在 conftest 中被 mock，无需真实服务）
+# 2) 前端检查（lint 不 --fix / vue-tsc 类型检查 / vite 构建产物）
+# 3) Docker 镜像可构建（后端与前端 Dockerfile，即实际交付单元）
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend-tests:
+    name: Backend tests (pytest + pgvector)
+    runs-on: ubuntu-latest
+    services:
+      # pgvector 官方镜像自带 vector 扩展，满足 conftest 的 CREATE EXTENSION vector
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: aichat_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        working-directory: backend
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/aichat_test
+        run: python -m pytest -q
+
+  frontend-checks:
+    name: Frontend (lint / type-check / build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci --legacy-peer-deps
+
+      # 不跑 npm run lint（其内部带 --fix，CI 不应改写源码），直接以检查模式调用
+      - name: Lint (oxlint)
+        working-directory: frontend
+        run: npx oxlint .
+
+      - name: Lint (eslint)
+        working-directory: frontend
+        run: npx eslint .
+
+      - name: Type-check
+        working-directory: frontend
+        run: npm run type-check
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build-only
+
+  docker-images:
+    name: Docker images (backend + frontend)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build backend image
+        run: docker build -f backend/Dockerfile -t ci-backend .
+
+      - name: Build frontend image
+        run: docker build -f frontend/Dockerfile -t ci-frontend .
