@@ -6,9 +6,9 @@ from jose import JWTError
 
 from .captcha import _verify_captcha
 from .rbac import build_user_context, get_default_role, sync_default_rbac
+from ..core import redis
 from ..core.config import settings
 from ..core.database import get_db
-from ..core.redis import redis_delete, redis_get_json, redis_set_json
 from ..core.security import (
     create_access_token,
     decode_token,
@@ -42,11 +42,11 @@ def _user_key(user_id: int) -> str:
 
 
 def cache_user(user_info: dict[str, Any], ttl: int = USER_CACHE_TTL_SECONDS):
-    redis_set_json(_user_key(user_info["user_id"]), user_info, ttl=ttl)
+    redis.redis_set_json(_user_key(user_info["user_id"]), user_info, ttl=ttl)
 
 
 def get_cached_user(user_id: int) -> dict[str, Any] | None:
-    return redis_get_json(_user_key(user_id))
+    return redis.redis_get_json(_user_key(user_id))
 
 
 def create_login_session(user):
@@ -57,12 +57,12 @@ def create_login_session(user):
             "username": user_info["username"],
         }
     )
-    redis_set_json(_token_key(token), user_info, ttl=ACCESS_TOKEN_TTL_SECONDS)
+    redis.redis_set_json(_token_key(token), user_info, ttl=ACCESS_TOKEN_TTL_SECONDS)
     return token
 
 
 def revoke_login_session(token: str):
-    redis_delete(_token_key(token))
+    redis.redis_delete(_token_key(token))
 
 
 def get_current_token(
@@ -71,7 +71,8 @@ def get_current_token(
     return credentials.credentials
 
 
-def _resolve_current_user(db, token: str) -> dict[str, Any]:
+def resolve_current_user_context(db, token: str) -> dict[str, Any]:
+    """校验 Bearer token（JWT 合法 + 会话存在）并返回用户上下文。"""
     try:
         payload = decode_token(token)
     except JWTError as exc:
@@ -81,7 +82,7 @@ def _resolve_current_user(db, token: str) -> dict[str, Any]:
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
-    session = redis_get_json(_token_key(token))
+    session = redis.redis_get_json(_token_key(token))
     if not session or session.get("user_id") != payload.get("user_id"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -98,12 +99,8 @@ def _resolve_current_user(db, token: str) -> dict[str, Any]:
         )
 
     user_info = build_user_context(db_user)
-    redis_set_json(_token_key(token), user_info, ttl=ACCESS_TOKEN_TTL_SECONDS)
+    redis.redis_set_json(_token_key(token), user_info, ttl=ACCESS_TOKEN_TTL_SECONDS)
     return user_info
-
-
-def resolve_current_user_context(db, token: str) -> dict[str, Any]:
-    return _resolve_current_user(db, token)
 
 
 def get_current_user(
@@ -115,7 +112,7 @@ def get_current_user(
     if current_user and current_user.get("token") == token:
         return current_user["user"]
 
-    user = _resolve_current_user(db, token)
+    user = resolve_current_user_context(db, token)
     request.state.current_user = {"token": token, "user": user}
     return user
 

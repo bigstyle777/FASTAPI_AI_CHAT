@@ -5,7 +5,7 @@ agent.planner 模块测试脚本
     ..\.venv\Scripts\python.exe tests\test_planner.py
 
 说明：
-- 通过 _get_user_ai_settings + _get_client 连接个人设置（或 .env 兜底）里的 client 和 model
+- 通过 get_user_ai_settings + get_client 连接个人设置（或 .env 兜底）里的 client 和 model
 - 可选环境变量 TEST_MEMORY_USERNAME 指定测试用户，
   默认取第一个在个人中心配置了 API Key 的用户
 """
@@ -24,7 +24,7 @@ from sqlalchemy import select
 from app.agent.planner import create_plan
 from app.core.database import SessionLocal
 from app.models import User, UserSetting
-from app.services.llm import _get_client, _get_user_ai_settings
+from app.services.ai_client import get_client, get_user_ai_settings
 
 # 覆盖不同场景的测试任务（对应 weather / calculator / web_search 工具）
 TEST_TASKS = [
@@ -91,8 +91,8 @@ def main():
         user = pick_test_user(db)
 
         # 连接 setting 里的 client 和 model（个人设置优先，.env 兜底）
-        api_key, provider = _get_user_ai_settings(user_id=user.id, db=db)
-        result = _get_client(api_key=api_key, provider=provider)
+        api_key, provider = get_user_ai_settings(user_id=user.id, db=db)
+        result = get_client(api_key=api_key, provider=provider)
 
         if not result:
             raise SystemExit("无法创建 AI client：请先在个人中心或 .env 配置 API Key")

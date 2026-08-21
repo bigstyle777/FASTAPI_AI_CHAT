@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Iterable
 
 from fastapi import Depends, HTTPException, status
+
+logger = logging.getLogger(__name__)
 
 from ..core.security import hash_password
 from ..crud import (
@@ -19,6 +22,9 @@ from ..crud import (
     get_users_with_roles,
     replace_role_permissions,
 )
+
+# 默认引导管理员密码（不安全，生产环境必须修改）
+_DEFAULT_BOOTSTRAP_PASSWORD = "admin123456"
 
 DEFAULT_ROLE_USER = "user"
 DEFAULT_ROLE_ADMIN = "admin"
@@ -217,6 +223,12 @@ def get_role_permissions(db, role_id: int):
 def ensure_bootstrap_admin(db, username: str | None, password: str | None):
     if not username or not password:
         return None
+
+    if password.strip() == _DEFAULT_BOOTSTRAP_PASSWORD:
+        logger.warning(
+            "[\u5b89\u5168\u8b66\u544a] \u5f15\u5bfc\u7ba1\u7406\u5458\u4f7f\u7528\u4e86\u9ed8\u8ba4\u5bc6\u7801 'admin123456'\uff0c"
+            "\u8bf7\u5c3d\u5feb\u5728 .env \u4e2d\u4fee\u6539 BOOTSTRAP_ADMIN_PASSWORD \u6216\u767b\u5f55\u540e\u66f4\u6539\u5bc6\u7801\u3002"
+        )
 
     sync_default_rbac(db)
     user = get_user_by_username(db, username.strip())

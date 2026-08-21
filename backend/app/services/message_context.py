@@ -55,7 +55,8 @@ def build_chat_context(
     return context_messages
 
 
-def _to_chat_messages(messages) -> list[dict[str, str]]:
+def to_chat_messages(messages) -> list[dict[str, str]]:
+    """把 ORM 消息对象压平成 LLM 所需的 role/content 字典列表。"""
     return [{"role": item.role, "content": item.content} for item in messages]
 
 
@@ -102,7 +103,7 @@ def load_chat_context(db, session_id: int, user_message: str) -> list[dict[str, 
         messages.append({"role": "user", "content": user_message})
         return messages
 
-    return _to_chat_messages(load_visible_messages(db, session_id))
+    return to_chat_messages(load_visible_messages(db, session_id))
 
 
 def save_chat_context(session_id: int, messages: list[dict[str, str]]) -> None:

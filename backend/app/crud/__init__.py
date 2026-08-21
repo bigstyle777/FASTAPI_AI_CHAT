@@ -1,0 +1,103 @@
+"""数据访问层（CRUD）。
+
+按实体拆分到子模块，这里统一再导出，保持 ``from app.crud import X`` 的既有调用方式不变。
+"""
+
+from .memory import (
+    create_memory,
+    delete_memory,
+    delete_memory_embeddings,
+    get_memories,
+    get_memories_without_embeddings,
+    get_memory_by_id,
+    replace_memory_embeddings,
+    update_memory,
+)
+from .messages import (
+    create_message,
+    delete_message,
+    delete_message_pair,
+    delete_messages_after,
+    delete_messages_by_session,
+    get_last_message_by_session,
+    get_message_ancestry,
+    get_message_by_id,
+    get_messages_by_session,
+    get_messages_up_to,
+    update_message,
+)
+from .rbac import (
+    add_permission_to_role,
+    create_permission,
+    create_role,
+    get_permission_by_code,
+    get_permission_by_id,
+    get_permissions,
+    get_role_by_id,
+    get_role_by_name,
+    get_roles,
+    replace_role_permissions,
+)
+from .sessions import (
+    create_session,
+    delete_empty_sessions_by_user,
+    delete_session,
+    get_session_by_id,
+    get_session_by_user,
+    get_sessions_by_user,
+    session_has_messages,
+    update_session,
+)
+from .settings import get_user_settings, save_user_settings
+from .users import (
+    create_user,
+    get_user_by_id,
+    get_user_by_username,
+    get_users_with_roles,
+)
+
+__all__ = [
+    "add_permission_to_role",
+    "create_memory",
+    "create_message",
+    "create_permission",
+    "create_role",
+    "create_session",
+    "create_user",
+    "delete_empty_sessions_by_user",
+    "delete_memory",
+    "delete_memory_embeddings",
+    "delete_message",
+    "delete_message_pair",
+    "delete_messages_after",
+    "delete_messages_by_session",
+    "delete_session",
+    "get_last_message_by_session",
+    "get_memories",
+    "get_memories_without_embeddings",
+    "get_memory_by_id",
+    "get_message_ancestry",
+    "get_message_by_id",
+    "get_messages_by_session",
+    "get_messages_up_to",
+    "get_permission_by_code",
+    "get_permission_by_id",
+    "get_permissions",
+    "get_role_by_id",
+    "get_role_by_name",
+    "get_roles",
+    "get_session_by_id",
+    "get_session_by_user",
+    "get_sessions_by_user",
+    "get_user_by_id",
+    "get_user_by_username",
+    "get_user_settings",
+    "get_users_with_roles",
+    "replace_memory_embeddings",
+    "replace_role_permissions",
+    "save_user_settings",
+    "session_has_messages",
+    "update_memory",
+    "update_message",
+    "update_session",
+]

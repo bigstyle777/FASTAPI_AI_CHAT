@@ -31,7 +31,7 @@ def embed_memory_task(memory_id: int, user_id: int):
 def extract_and_save_memory_task(user_id: int, message: str):
     """后台从消息中提取记忆并保存；保存时自动派发向量化任务。"""
     # 延迟导入，避免模块加载时的循环依赖
-    from ..memory import extract_and_save_memory
+    from ..memory_extraction import extract_and_save_memory
 
     db = SessionLocal()
     try:

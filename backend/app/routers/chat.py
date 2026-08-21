@@ -8,7 +8,6 @@ from ..core.database import get_db
 from ..schemas import (
     ActionResponse,
     ChatRequest,
-    ChatSessionUpdate,
     ChatSessionUpdateRequest,
     ChatSessionUpdateResponse,
     CreateChatSessionRequest,
@@ -18,19 +17,18 @@ from ..schemas import (
     SessionListResponse,
 )
 from ..services.auth import get_current_user
-from ..services.branch import create_message_branch_service
+from ..services.branch import create_branch_service, create_message_branch_service
 from ..services.messages import (
     delete_message_service,
     get_messages_service,
-    modify_message_services,
+    modify_message_service,
     send_message_service,
     send_message_stream_service,
     stop_generation_service,
 )
 from ..services.sessions import (
-    create_branch_service,
+    clear_session_messages_service,
     create_session_service,
-    delete_messages_service,
     delete_session_service,
     get_sessions_service,
     update_session_service,
@@ -88,7 +86,7 @@ def delete_messages(
     user: CurrentUser,
     db: Database,
 ):
-    return delete_messages_service(db, user, session_id)
+    return clear_session_messages_service(db, user, session_id)
 
 
 # message增删改查
@@ -107,7 +105,7 @@ def modify_message_api(
     message_id: int, request: MessageUpdateRequest, user: CurrentUser, db: Database
 ):
     return StreamingResponse(
-        modify_message_services(db, user, message_id, request.content),
+        modify_message_service(db, user, message_id, request.content),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

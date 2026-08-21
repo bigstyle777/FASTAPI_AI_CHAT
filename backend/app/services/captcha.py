@@ -2,8 +2,8 @@ import base64
 import random
 import uuid
 
+from ..core import redis
 from ..core.config import settings
-from ..core.redis import redis_delete, redis_get, redis_set
 
 CAPTCHA_TTL_SECONDS = settings.captcha_ttl_seconds
 CAPTCHA_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -56,7 +56,7 @@ def _create_captcha_image(code):
 def create_captcha_service():
     captcha_id = str(uuid.uuid4())
     code = _create_captcha_code()
-    redis_set(_captcha_key(captcha_id), code.lower(), ttl=CAPTCHA_TTL_SECONDS)
+    redis.redis_set(_captcha_key(captcha_id), code.lower(), ttl=CAPTCHA_TTL_SECONDS)
     return {
         "success": True,
         "captcha_id": captcha_id,
@@ -70,12 +70,12 @@ def _verify_captcha(captcha_id, captcha_code):
         return False
 
     key = _captcha_key(captcha_id)
-    stored_code = redis_get(key)
+    stored_code = redis.redis_get(key)
     if stored_code is None:
         return False
 
     if stored_code != captcha_code.strip().lower():
         return False
 
-    redis_delete(key)
+    redis.redis_delete(key)
     return True

@@ -1,5 +1,5 @@
+from ..core.sse import sse_event
 from ..crud import (
-    create_message,
     delete_message,
     delete_message_pair,
     delete_messages_after,
@@ -26,17 +26,16 @@ from .cache import (
 )
 from .llm import chat_with_ai, chat_with_ai_stream
 from .message_context import (
-    get_branch_parent_message_id,
     load_chat_context,
     load_visible_messages,
     save_chat_context,
+    to_chat_messages,
 )
-from .task.title_queue import enqueue_session_title_generation
-from .utils import sse_event
+from .message_persistence import persist_assistant_message, persist_user_message
 from .task.memory_queue import enqueue_memory_extraction
 
 
-def _validate_message_request(db, user, request):
+def _get_validated_message(db, user, request):
     message = request.message.strip()
     if not message:
         raise BusinessError("消息不能为空")
@@ -68,23 +67,18 @@ def delete_message_service(db, user, message_id):
 
 
 def send_message_service(db, user, request):
-    message = _validate_message_request(db, user, request)
-
-    parent_id = get_branch_parent_message_id(db, request.session_id)
-    user_message = create_message(
-        db, request.session_id, "user", message, parent_id=parent_id
+    message = _get_validated_message(db, user, request)
+    user_message = persist_user_message(
+        db, user["user_id"], request.session_id, message
     )
-    update_session(db, request.session_id, message)
-    enqueue_session_title_generation(request.session_id, message, user["user_id"])
 
     history = load_visible_messages(db, request.session_id)
-    messages = [{"role": item.role, "content": item.content} for item in history]
+    messages = to_chat_messages(history)
     ai_reply = chat_with_ai(messages=messages, user_id=user["user_id"], db=db)
 
-    create_message(
-        db, request.session_id, "assistant", ai_reply, parent_id=user_message.id
+    persist_assistant_message(
+        db, request.session_id, ai_reply, parent_id=user_message.id
     )
-    update_session(db, request.session_id, ai_reply)
     enqueue_memory_extraction(user["user_id"], message)
 
     return {"success": True}
@@ -141,26 +135,20 @@ def stream_ai_reply(
             ai_reply += event.content
             yield sse_event(event.type, event)
 
-    create_message(
-        db=db,
-        session_id=session_id,
-        role="assistant",
-        content=ai_reply,
+    persist_assistant_message(
+        db,
+        session_id,
+        ai_reply,
         model=usage.model,
         prompt_tokens=usage.prompt_tokens,
         completion_tokens=usage.completion_tokens,
         total_tokens=usage.total_tokens,
         parent_id=parent_id,
     )
-    update_session(db, session_id, ai_reply)
     saved_messages = history_messages if history_messages is not None else messages
-    saved_messages.append(
-        {
-            "role": "assistant",
-            "content": ai_reply,
-        }
-    )
+    saved_messages.append({"role": "assistant", "content": ai_reply})
     save_chat_context(session_id, saved_messages)
+
     user_message_text = _last_user_message_text(messages)
     if user_message_text:
         enqueue_memory_extraction(user_id, user_message_text)
@@ -179,7 +167,7 @@ def _last_user_message_text(messages: list[dict[str, str]]) -> str:
     return ""
 
 
-def modify_message_services(db, user, message_id, new_content):
+def modify_message_service(db, user, message_id, new_content):
     new_content = new_content.strip()
     if not new_content:
         raise BusinessError("消息不能为空")
@@ -197,7 +185,7 @@ def modify_message_services(db, user, message_id, new_content):
     invalidate_chat_cache(message.session_id)
 
     history = get_messages_by_session(db, message.session_id)
-    messages = [{"role": item.role, "content": item.content} for item in history]
+    messages = to_chat_messages(history)
 
     yield from stream_ai_reply(
         db,
@@ -205,9 +193,7 @@ def modify_message_services(db, user, message_id, new_content):
         message.session_id,
         messages,
         parent_id=message.id,
-        history_messages=[
-            {"role": item.role, "content": item.content} for item in history
-        ],
+        history_messages=messages,
     )
     return {"success": True, "message": "修改成功"}
 
@@ -226,20 +212,14 @@ def send_message_stream_service(db, user, request):
 
     try:
         try:
-            message = _validate_message_request(db, user, request)
+            message = _get_validated_message(db, user, request)
         except BusinessError as error:
             yield sse_event("error", StreamErrorEvent(message=str(error.message)))
             return
 
-        parent_id = get_branch_parent_message_id(db, request.session_id)
-        user_message = create_message(
-            db, request.session_id, "user", message, parent_id=parent_id
-        )
-        update_session(db, request.session_id, message)
-        enqueue_session_title_generation(request.session_id, message, user_id)
+        user_message = persist_user_message(db, user_id, request.session_id, message)
 
-        history_messages = load_chat_context(db, request.session_id, message)
-        messages = history_messages
+        messages = load_chat_context(db, request.session_id, message)
 
         yield from stream_ai_reply(
             db,
@@ -247,7 +227,7 @@ def send_message_stream_service(db, user, request):
             request.session_id,
             messages,
             parent_id=user_message.id,
-            history_messages=history_messages,
+            history_messages=messages,
         )
 
     except Exception as error:  # noqa: BLE001

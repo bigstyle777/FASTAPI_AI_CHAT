@@ -1,12 +1,10 @@
 from sqlalchemy.orm import Session
 
 from ..crud import (
-    create_message,
     create_session,
     delete_empty_sessions_by_user,
     delete_messages_by_session,
     delete_session,
-    get_messages_by_session,
     get_session_by_user,
     get_sessions_by_user,
     session_has_messages,
@@ -14,7 +12,7 @@ from ..crud import (
 )
 from ..exceptions import BusinessError
 from .cache import delete_chat_context
-from .message_context import save_chat_context
+from .constants import DEFAULT_SESSION_TITLE
 
 
 def _format_dt(value):
@@ -26,7 +24,7 @@ def _format_dt(value):
 
 
 def create_session_service(db, user, request):
-    title = (request.title or "").strip() or "新会话"
+    title = (request.title or "").strip() or DEFAULT_SESSION_TITLE
     chat_session = create_session(db, user["user_id"], title)
     return {"success": True, "session_id": chat_session.id}
 
@@ -74,7 +72,7 @@ def delete_session_service(db, user, session_id):
     return {"success": True, "message": "会话已删除"}
 
 
-def delete_messages_service(db, user, session_id):
+def clear_session_messages_service(db, user, session_id):
     session = get_session_by_user(db, session_id, user["user_id"])
     if not session:
         raise BusinessError("会话不存在或已删除")
@@ -112,36 +110,3 @@ def get_sessions_service(db, user):
             }
         )
     return {"success": True, "sessions": result}
-
-
-def create_branch_service(db, user, session_id):
-    session = get_session_by_user(db, session_id, user["user_id"])
-    if not session:
-        raise BusinessError("会话不存在或已删除")
-    new_session = create_session(
-        db, user["user_id"], f"分支·{session.title}", parent_session_id=session_id
-    )
-
-    messages = get_messages_by_session(db, session_id)
-    for message in messages:
-        create_message(
-            db=db,
-            session_id=new_session.id,
-            role=message.role,
-            content=message.content,
-            model=message.model,
-            prompt_tokens=message.prompt_tokens,
-            completion_tokens=message.completion_tokens,
-            total_tokens=message.total_tokens,
-        )
-
-    new_messages = [
-        {
-            "role": m.role,
-            "content": m.content,
-        }
-        for m in messages
-    ]
-
-    save_chat_context(session_id=new_session.id, messages=new_messages)
-    return {"success": True, "session_id": new_session.id}

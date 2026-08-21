@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     jwt_secret_key: str = "myselectkey"
     jwt_algorithm: str = "HS256"
     redis_url: str = "redis://127.0.0.1:6379/0"
+    cors_allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     access_token_ttl_seconds: int = 60 * 60 * 24 * 30
     captcha_ttl_seconds: int = 300
     user_cache_ttl_seconds: int = 60 * 60 * 24
@@ -50,6 +51,7 @@ class Settings(BaseSettings):
     rag_chunk_overlap: int = 150
     rag_max_context_chars: int = 5000
     tavily_api_key: str | None = None
+    log_level: str = "INFO"
 
     @model_validator(mode="after")
     def fill_derived_defaults(self):
@@ -58,6 +60,16 @@ class Settings(BaseSettings):
         if not self.deepseek_model:
             self.deepseek_model = self.ai_model or "deepseek-v4-flash"
         return self
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """将逗号分隔的 CORS 允许来源字符串解析为列表。"""
+        return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
+
+    @property
+    def is_default_jwt_secret(self) -> bool:
+        """检测 JWT 密钥是否为不安全的默认值。"""
+        return self.jwt_secret_key in ("myselectkey", "change-me", "")
 
 
 @lru_cache(maxsize=1)

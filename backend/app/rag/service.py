@@ -71,31 +71,8 @@ def stream_upload_document_service(
         mark_document_processing(db, document)
         yield _progress("saved", "文件已保存", _serialize_document(document))
 
-        yield _progress("parsing", "正在解析文档")
-        text = load_text_from_file(document.storage_path, document.filename)
-
-        yield _progress("chunking", "正在切分文档")
-        chunks = split_text(
-            text,
-            chunk_size=settings.rag_chunk_size,
-            overlap=settings.rag_chunk_overlap,
-        )
-        if not chunks:
-            raise BusinessError("文档没有可索引内容")
-
-        yield _progress("embedding", f"正在生成 {len(chunks)} 个文本块的向量")
-        vectors = embed_texts([chunk.content for chunk in chunks], user_id, db)
-
-        yield _progress("indexing", "正在写入 pgvector 索引")
-        embedding_model = resolve_embedding_model(user_id, db)
-        replace_document_chunks(
-            db=db,
-            document=document,
-            chunks=chunks,
-            embeddings=vectors,
-            model=embedding_model,
-            dimension=settings.rag_embedding_dimension,
-        )
+        for stage, message in _index_document_steps(db, user_id, document):
+            yield _progress(stage, message)
 
         db.refresh(document)
         yield sse_event("done", {"document": _serialize_document(document)})
@@ -103,7 +80,7 @@ def stream_upload_document_service(
         _mark_failed(db, document, str(error.message))
         _delete_untracked_file(document, storage_path)
         yield sse_event("error", {"message": str(error.message)})
-    except Exception as error:  
+    except Exception as error:
         logger.exception("RAG upload failed")
         _mark_failed(db, document, str(error))
         _delete_untracked_file(document, storage_path)
@@ -178,7 +155,20 @@ def index_document(db: Session, user_id: int, document_id: int) -> None:
     if not document:
         raise BusinessError("文档不存在")
 
+    for _ in _index_document_steps(db, user_id, document):
+        pass
+
+
+def _index_document_steps(db: Session, user_id: int, document) -> Iterator[tuple[str, str]]:
+    """解析→切分→向量化→写索引的共用管线；yield (stage, message) 进度。
+
+    流式上传和后台索引共用这一份顺序，保证两条路径的阶段永远一致：
+    以后新增/调整索引步骤只需改这里，两条路径连同进度上报一起生效。
+    """
+    yield "parsing", "正在解析文档"
     text = load_text_from_file(document.storage_path, document.filename)
+
+    yield "chunking", "正在切分文档"
     chunks = split_text(
         text,
         chunk_size=settings.rag_chunk_size,
@@ -187,7 +177,10 @@ def index_document(db: Session, user_id: int, document_id: int) -> None:
     if not chunks:
         raise BusinessError("文档没有可索引内容")
 
+    yield "embedding", f"正在生成 {len(chunks)} 个文本块的向量"
     vectors = embed_texts([chunk.content for chunk in chunks], user_id, db)
+
+    yield "indexing", "正在写入 pgvector 索引"
     embedding_model = resolve_embedding_model(user_id, db)
     replace_document_chunks(
         db=db,

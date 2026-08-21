@@ -1,5 +1,5 @@
+from ..core import redis
 from ..core.config import settings
-from ..core.redis import redis_get_json, redis_set_json
 from ..crud import get_user_settings, save_user_settings
 
 USER_SETTINGS_CACHE_TTL_SECONDS = settings.user_settings_cache_ttl_seconds
@@ -10,7 +10,7 @@ def _settings_cache_key(user_id):
 
 
 def _cache_settings(user_id, payload):
-    redis_set_json(
+    redis.redis_set_json(
         _settings_cache_key(user_id),
         payload,
         ttl=USER_SETTINGS_CACHE_TTL_SECONDS,
@@ -28,7 +28,7 @@ def _default_settings_payload():
 
 
 def get_settings_service(db, user):
-    cached_settings = redis_get_json(_settings_cache_key(user["user_id"]))
+    cached_settings = redis.redis_get_json(_settings_cache_key(user["user_id"]))
     if cached_settings is not None:
         return {"success": True, **cached_settings}
 

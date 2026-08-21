@@ -12,7 +12,7 @@ import inspect
 import json
 import logging
 from time import perf_counter
-from typing import Any, Callable
+from typing import Any, Callable, Generator
 
 from ..schemas import StreamDeltaEvent, StreamUsageEvent, TokenUsage
 from ..tools import ALL_TOOLS, TOOL_REGISTRY
@@ -169,7 +169,7 @@ def run_tool_loop(
             messages=history,
             tools=ALL_TOOLS,
         )
-        message: Unknown = response.choices[0].message
+        message = response.choices[0].message
 
         # 模型不再调用工具，直接给出最终回答
         if not message.tool_calls:
@@ -192,6 +192,73 @@ def run_tool_loop(
             )
 
     return history, None
+
+
+class _StreamRound:
+    """一轮流式响应的聚合结果：分片 tool_calls / 完整正文 / usage。"""
+
+    def __init__(self):
+        self.tool_call_parts: dict[int, dict] = {}
+        self.content = ""
+        self.usage = None
+
+
+def _merge_tool_call_fragment(parts: dict[int, dict], fragments) -> None:
+    """把流式返回的 tool_calls 分片按 index 聚合进 parts（参数增量拼接）。"""
+    for tc in fragments:
+        index = getattr(tc, "index", 0)
+        entry = parts.setdefault(index, {"id": "", "name": "", "arguments": ""})
+        if getattr(tc, "id", None):
+            entry["id"] = tc.id
+        function = getattr(tc, "function", None)
+        if function:
+            if getattr(function, "name", None):
+                entry["name"] = function.name
+            if getattr(function, "arguments", None):
+                entry["arguments"] += function.arguments
+
+
+def _assembled_tool_calls(parts: dict[int, dict]) -> list[dict]:
+    """把聚合好的分片还原成完整 tool_calls 列表（按 index 排序）。"""
+    return [
+        {
+            "id": parts[index]["id"],
+            "type": "function",
+            "function": {
+                "name": parts[index]["name"],
+                "arguments": parts[index]["arguments"],
+            },
+        }
+        for index in sorted(parts)
+    ]
+
+
+def _consume_stream_round(response) -> Generator[StreamDeltaEvent, None, _StreamRound]:
+    """消费一轮流式响应：逐段 yield 正文增量，结束后返回该轮聚合结果。"""
+    round_result = _StreamRound()
+
+    for chunk in response:
+        if getattr(chunk, "usage", None):
+            round_result.usage = chunk.usage
+            continue
+
+        if not chunk.choices:
+            continue
+
+        delta = chunk.choices[0].delta
+        if delta is None:
+            continue
+
+        if getattr(delta, "tool_calls", None):
+            _merge_tool_call_fragment(round_result.tool_call_parts, delta.tool_calls)
+            continue
+
+        content = getattr(delta, "content", None)
+        if content:
+            round_result.content += content
+            yield StreamDeltaEvent(content=content)
+
+    return round_result
 
 
 def stream_with_tools(
@@ -229,61 +296,14 @@ def stream_with_tools(
         if use_tools:
             kwargs["tools"] = ALL_TOOLS
 
-        response: Unknown = client.chat.completions.create(**kwargs)
-
-        # 流式返回的 tool_calls 是分片的，按 index 聚合成完整参数
-        tool_call_parts: dict[int, dict] = {}
-        final_usage = None
-
-        for chunk in response:
-            if getattr(chunk, "usage", None):
-                final_usage = chunk.usage
-                continue
-
-            if not chunk.choices:
-                continue
-
-            delta = chunk.choices[0].delta
-            if delta is None:
-                continue
-
-            if getattr(delta, "tool_calls", None):
-                for tc in delta.tool_calls:
-                    index = getattr(tc, "index", 0)
-                    parts = tool_call_parts.setdefault(
-                        index, {"id": "", "name": "", "arguments": ""}
-                    )
-                    if getattr(tc, "id", None):
-                        parts["id"] = tc.id
-                    function = getattr(tc, "function", None)
-                    if function:
-                        if getattr(function, "name", None):
-                            parts["name"] = function.name
-                        if getattr(function, "arguments", None):
-                            parts["arguments"] += function.arguments
-                continue
-
-            content = getattr(delta, "content", None)
-            if content:
-                yield StreamDeltaEvent(content=content)
+        response = client.chat.completions.create(**kwargs)
+        round_result = yield from _consume_stream_round(response)
 
         # 这一轮流里有工具调用请求，执行后带着结果继续下一轮
-        if tool_call_parts and use_tools:
-            tool_calls = [
-                {
-                    "id": parts["id"],
-                    "type": "function",
-                    "function": {
-                        "name": parts["name"],
-                        "arguments": parts["arguments"],
-                    },
-                }
-                for parts in (
-                    tool_call_parts[index] for index in sorted(tool_call_parts)
-                )
-            ]
+        if round_result.tool_call_parts and use_tools:
+            tool_calls = _assembled_tool_calls(round_result.tool_call_parts)
 
-            # trace 起点：tool_call_parts 在这里组装完成，把每个调用暴露出去，
+            # trace 起点：把每个调用暴露出去，
             # agent 层据此记录"模型发起了工具调用"这一节点
             if on_tool_call:
                 for tc in tool_calls:
@@ -316,12 +336,12 @@ def stream_with_tools(
             continue
 
         # 正常回答结束，输出 token 用量
-        if final_usage:
+        if round_result.usage:
             yield StreamUsageEvent(
                 usage=TokenUsage(
-                    prompt_tokens=final_usage.prompt_tokens,
-                    completion_tokens=final_usage.completion_tokens,
-                    total_tokens=final_usage.total_tokens,
+                    prompt_tokens=round_result.usage.prompt_tokens,
+                    completion_tokens=round_result.usage.completion_tokens,
+                    total_tokens=round_result.usage.total_tokens,
                     model=model,
                 )
             )

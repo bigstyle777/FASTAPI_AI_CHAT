@@ -1,4 +1,5 @@
 from ..crud import (
+    create_message,
     create_session,
     get_message_by_id,
     get_messages_by_session,
@@ -7,6 +8,41 @@ from ..crud import (
 )
 from ..exceptions import BusinessError
 from .cache import delete_chat_context
+from .constants import BRANCH_TITLE_PREFIX
+from .message_context import save_chat_context
+
+
+def create_branch_service(db, user, session_id):
+    session = get_session_by_user(db, session_id, user["user_id"])
+    if not session:
+        raise BusinessError("会话不存在或已删除")
+    new_session = create_session(
+        db, user["user_id"], f"{BRANCH_TITLE_PREFIX}{session.title}", parent_session_id=session_id
+    )
+
+    messages = get_messages_by_session(db, session_id)
+    for message in messages:
+        create_message(
+            db=db,
+            session_id=new_session.id,
+            role=message.role,
+            content=message.content,
+            model=message.model,
+            prompt_tokens=message.prompt_tokens,
+            completion_tokens=message.completion_tokens,
+            total_tokens=message.total_tokens,
+        )
+
+    new_messages = [
+        {
+            "role": m.role,
+            "content": m.content,
+        }
+        for m in messages
+    ]
+
+    save_chat_context(session_id=new_session.id, messages=new_messages)
+    return {"success": True, "session_id": new_session.id}
 
 
 def create_message_branch_service(db, user, message_id: int):
@@ -36,7 +72,7 @@ def create_message_branch_service(db, user, message_id: int):
             else source_session.title
         )
 
-    title = f"分支·{title_source[:20]}"
+    title = f"{BRANCH_TITLE_PREFIX}{title_source[:20]}"
     branch_session = create_session(
         db,
         user["user_id"],

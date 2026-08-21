@@ -6,11 +6,7 @@ from typing import Generator
 from sqlalchemy.orm import Session
 
 from ..core.sse import sse_event
-from ..crud import (
-    create_message,
-    get_session_by_user,
-    update_session,
-)
+from ..crud import get_session_by_user
 from ..exceptions import BusinessError
 from ..schemas import StreamErrorEvent, StreamUsageEvent, TokenUsage
 from ..services.cache import (
@@ -18,13 +14,13 @@ from ..services.cache import (
     clear_generation_status,
     is_stop_requested,
 )
-from ..services.llm import _get_client, _get_user_ai_settings
-from ..services.message_context import (
-    get_branch_parent_message_id,
-    load_chat_context,
+from ..services.ai_client import get_client, get_user_ai_settings
+from ..services.message_context import load_chat_context
+from ..services.message_persistence import (
+    persist_assistant_message,
+    persist_user_message,
 )
 from ..services.task.memory_queue import enqueue_memory_extraction
-from ..services.task.title_queue import enqueue_session_title_generation
 from .agent import run_agent_stream
 from .events import AgentDoneEvent, AgentPlanEvent
 from .repo import create_agent_run, update_agent_run
@@ -34,7 +30,57 @@ from .trace import AgentTracer
 logger = logging.getLogger(__name__)
 
 
-def agent_stream_service(db: Session, user: dict, request) -> Generator[str, None, None]:
+def _resolve_run_status(failed: bool, session_id: int) -> str:
+    if failed:
+        return "failed"
+    if is_stop_requested(session_id):
+        return "stopped"
+    return "completed"
+
+
+class _RunOutcome:
+    """从 agent 流事件中收集需要落库的信息。
+
+    ai_reply / usage / plan / error_message / final_state 这几项
+    总是随事件流同时演进、结束时一起写进 agent_runs，收成一个对象
+    避免 service 里散落五个局部变量。
+    """
+
+    def __init__(self):
+        self.ai_reply = ""
+        self.usage = TokenUsage()
+        self.plan = None
+        self.error_message = None
+        self.final_state: AgentState | None = None
+
+    @property
+    def failed(self) -> bool:
+        return self.error_message is not None
+
+    def record(self, event) -> None:
+        """消费一个事件，更新落库所需状态（不负责推送）。"""
+        if isinstance(event, AgentState):
+            self.final_state = event
+        elif isinstance(event, StreamErrorEvent):
+            self.error_message = event.message
+        elif isinstance(event, AgentPlanEvent):
+            self.plan = event.steps
+        elif isinstance(event, StreamUsageEvent):
+            self.usage = event.usage
+        elif getattr(event, "type", None) == "delta":
+            self.ai_reply += event.content
+
+    def resolved_error_message(self) -> str | None:
+        if self.error_message:
+            return self.error_message
+        if self.final_state is not None:
+            return self.final_state.error
+        return None
+
+
+def agent_stream_service(
+    db: Session, user: dict, request
+) -> Generator[str, None, None]:
     """POST /agent/stream 的 SSE 生成器。"""
     user_id = user["user_id"]
     session_id = request.session_id
@@ -60,19 +106,9 @@ def agent_stream_service(db: Session, user: dict, request) -> Generator[str, Non
         if not session:
             raise BusinessError("会话不存在或已删除")
 
-        parent_id = get_branch_parent_message_id(db, session_id)
-        user_message = create_message(
-            db,
-            session_id,
-            "user",
-            message,
-            parent_id=parent_id,
-        )
-        update_session(db, session_id, message)
-        enqueue_session_title_generation(session_id, message, user_id)
+        user_message = persist_user_message(db, user_id, session_id, message)
 
-        history = load_chat_context(db, session_id, message)
-        messages = history
+        messages = load_chat_context(db, session_id, message)
 
         run = create_agent_run(
             db,
@@ -82,18 +118,14 @@ def agent_stream_service(db: Session, user: dict, request) -> Generator[str, Non
         )
         tracer = AgentTracer(db, run.id)
 
-        api_key, provider = _get_user_ai_settings(user_id=user_id, db=db)
-        result = _get_client(api_key=api_key, provider=provider)
+        api_key, provider = get_user_ai_settings(user_id=user_id, db=db)
+        result = get_client(api_key=api_key, provider=provider)
         if not result:
             raise BusinessError("当前 AI 服务暂不可用，请先在个人中心配置 API Key")
         client, model = result
 
         context = {"db": db, "user_id": user_id}
-        ai_reply = ""
-        usage = TokenUsage()
-        plan_payload = None
-        final_state: AgentState | None = None
-        failed = False
+        outcome = _RunOutcome()
 
         for event in run_agent_stream(
             client,
@@ -104,57 +136,42 @@ def agent_stream_service(db: Session, user: dict, request) -> Generator[str, Non
             tracer=tracer,
             should_stop=lambda: is_stop_requested(session_id),
         ):
+            outcome.record(event)
             if isinstance(event, AgentState):
-                final_state = event
                 continue
-            if isinstance(event, StreamErrorEvent):
-                failed = True
-            if isinstance(event, AgentPlanEvent):
-                plan_payload = event.steps
-            elif isinstance(event, StreamUsageEvent):
-                usage = event.usage
-            elif hasattr(event, "type") and event.type == "delta":
-                ai_reply += event.content
             yield sse_event(event.type, event)
 
-        if failed:
-            status = "failed"
-        elif is_stop_requested(session_id):
-            status = "stopped"
-        else:
-            status = "completed"
+        status = _resolve_run_status(outcome.failed, session_id)
         update_agent_run(
             db,
             run.id,
             status=status,
-            plan=plan_payload,
-            final_answer=ai_reply,
-            model=usage.model or model,
-            prompt_tokens=usage.prompt_tokens,
-            completion_tokens=usage.completion_tokens,
-            total_tokens=usage.total_tokens,
-            error_message=final_state.error if final_state else None,
+            plan=outcome.plan,
+            final_answer=outcome.ai_reply,
+            model=outcome.usage.model or model,
+            prompt_tokens=outcome.usage.prompt_tokens,
+            completion_tokens=outcome.usage.completion_tokens,
+            total_tokens=outcome.usage.total_tokens,
+            error_message=outcome.resolved_error_message(),
         )
 
-        if ai_reply.strip():
-            create_message(
-                db=db,
-                session_id=session_id,
-                role="assistant",
-                content=ai_reply,
-                model=usage.model or model,
-                prompt_tokens=usage.prompt_tokens,
-                completion_tokens=usage.completion_tokens,
-                total_tokens=usage.total_tokens,
+        if outcome.ai_reply.strip():
+            persist_assistant_message(
+                db,
+                session_id,
+                outcome.ai_reply,
+                model=outcome.usage.model or model,
+                prompt_tokens=outcome.usage.prompt_tokens,
+                completion_tokens=outcome.usage.completion_tokens,
+                total_tokens=outcome.usage.total_tokens,
                 parent_id=user_message.id,
             )
-            update_session(db, session_id, ai_reply)
         enqueue_memory_extraction(user_id, message)
 
         yield sse_event("done", AgentDoneEvent(run_id=run.id, status=status))
         clear_generation_status(session_id)
 
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:
         logger.exception("Agent 运行失败")
         if tracer is not None and run is not None:
             tracer.point(
