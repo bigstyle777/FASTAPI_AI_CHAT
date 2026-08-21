@@ -13,3 +13,5 @@ psycopg[binary]==3.2.9
 pgvector==0.4.2
 redis==8.0.1
 celery==5.6.3
+requests==2.34.2
+tavily-python==0.7.27

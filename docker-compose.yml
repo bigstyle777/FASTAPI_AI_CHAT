@@ -34,7 +34,98 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: aichat-backend
+    container_name: aichat-backend
+    # 先执行数据库迁移再启动 API；exec 让 uvicorn 接管 PID 1 以正常响应停止信号
+    command:
+      - sh
+      - -c
+      - |
+        alembic -c backend/alembic.ini upgrade head
+        exec uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
+    environment:
+      # 容器网络内的服务地址，强制覆盖 .env 里的本地开发值
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/aichat
+      REDIS_URL: redis://redis:6379/0
+      # 前端经 Nginx 同源反代访问 API，CORS 仅在直连后端端口时生效
+      CORS_ALLOWED_ORIGINS: http://localhost:8080,http://127.0.0.1:8080
+    # .env 提供密钥/模型等业务配置；文件不存在时也不阻塞启动
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      # 与 vite.config.ts 的 dev proxy 目标端口一致：本地 vite dev server
+      # 可直接代理到容器化后端；API 文档见 http://localhost:8001/docs
+      - "8001:8000"
+    volumes:
+      - backend-uploads:/app/backend/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/', timeout=5).raise_for_status()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: aichat-backend
+    container_name: aichat-worker
+    command: celery -A backend.app.core.celery_worker worker --loglevel=INFO
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/aichat
+      REDIS_URL: redis://redis:6379/0
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      # RAG 文档解析在 worker 中执行，须与 backend 共享上传目录
+      - backend-uploads:/app/backend/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A backend.app.core.celery_worker inspect ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    image: aichat-frontend
+    container_name: aichat-frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      # 容器内 localhost 解析到 IPv6，而 nginx 仅监听 IPv4，须用 127.0.0.1
+      test: ["CMD-SHELL", "wget -qO /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
 
 volumes:
   redis-data:
   postgres-data:
+  backend-uploads:

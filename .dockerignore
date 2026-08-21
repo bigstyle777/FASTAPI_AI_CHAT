@@ -1,0 +1,26 @@
+# 版本控制 / 本地环境（绝不进入镜像，.env 含密钥）
+.git
+.venv
+.env
+.workbuddy
+
+# 依赖与构建产物
+**/node_modules
+**/__pycache__
+**/*.pyc
+frontend/dist
+
+# 与镜像无关的源码目录
+backend/tests
+backend/examples
+backend/uploads
+
+# 与镜像无关的项目资料
+fastapi-admin-dashboard
+wiki
+
+# 杂项（docker/nginx 需保留供 frontend 构建复制，勿排除 docker/）
+docker-compose.yml
+pyrightconfig.json
+package.json
+package-lock.json
