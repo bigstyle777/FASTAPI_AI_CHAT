@@ -1,4 +1,4 @@
-import { apiCall, apiJson } from './client'
+import { apiJson } from './client'
 import type {
   ActionResponse,
   AdminDashboard,

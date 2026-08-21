@@ -6,14 +6,13 @@
  * - 交互：骨架屏、按钮 loading、全局 Toast、空状态、错误兜底
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 import { useUiStore } from '@/stores/ui'
 import { createMemory, deleteMemory, fetchMemories, updateMemory } from '@/api/memory'
 import type { MemoryItem } from '@/types'
 
-const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const themeStore = useThemeStore()

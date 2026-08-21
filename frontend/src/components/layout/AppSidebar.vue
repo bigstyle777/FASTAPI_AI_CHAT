@@ -10,7 +10,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 import { useUiStore } from '@/stores/ui'
 
-const props = withDefaults(
+withDefaults(
   defineProps<{
     /** 侧边栏模式：chat 显示会话列表，nav 显示导航 */
     mode?: 'chat' | 'nav'

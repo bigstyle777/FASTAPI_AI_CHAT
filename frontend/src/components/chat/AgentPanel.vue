@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, reactive } from 'vue'
-import type { AgentSSEEvent, AgentPlanStep, AgentToolEvent, AgentStepEvent } from '@/types'
+import type { AgentPlanStep, AgentToolEvent, AgentStepEvent } from '@/types'
 import { useChatStore } from '@/stores/chat'
 
 const chatStore = useChatStore()
@@ -71,28 +71,6 @@ const stepCount = computed(() => plan.value.length || Object.keys(stepState.valu
 const completedSteps = computed(() =>
   Object.values(stepState.value).filter((s) => s.status === 'completed').length
 )
-
-// 状态图标
-function statusIcon(status: string): string {
-  switch (status) {
-    case 'completed': return 'check'
-    case 'failed': return 'x'
-    case 'started': return 'loader'
-    case 'skipped': return 'skip'
-    default: return 'dot'
-  }
-}
-
-// 状态文本
-function statusText(status: string): string {
-  switch (status) {
-    case 'completed': return '完成'
-    case 'failed': return '失败'
-    case 'started': return '执行中…'
-    case 'skipped': return '已跳过'
-    default: return '等待中'
-  }
-}
 
 // 工具名称美化
 function toolLabel(name: string): string {
