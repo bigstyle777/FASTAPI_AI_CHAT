@@ -1,16 +1,29 @@
 services:
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.2-alpine
     container_name: aichat-redis
+    # requirepass 由 .env 的 REDIS_PASSWORD 注入；仅绑定本机回环，不对外暴露
+    # maxmemory 防止内存失控拖垮宿主机（本服务为缓存用途，用 allkeys-lru 淘汰）
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?请在 .env 中设置 REDIS_PASSWORD}", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
       interval: 10s
       timeout: 3s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
   db:
@@ -20,10 +33,11 @@ services:
     container_name: aichat-postgres
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
       POSTGRES_DB: aichat
     ports:
-      - "5432:5432"
+      # 仅本机回环（本地调试用）；生产环境可整体移除该映射
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -32,6 +46,16 @@ services:
       timeout: 3s
       retries: 5
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
   backend:
@@ -48,11 +72,17 @@ services:
         alembic -c backend/alembic.ini upgrade head
         exec uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
     environment:
-      # 容器网络内的服务地址，强制覆盖 .env 里的本地开发值
-      DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/aichat
-      REDIS_URL: redis://redis:6379/0
+      # 容器网络内的服务地址，强制覆盖 .env 里的本地开发值；密码从 .env 注入
+      DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD}@db:5432/aichat
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       # 前端经 Nginx 同源反代访问 API，CORS 仅在直连后端端口时生效
       CORS_ALLOWED_ORIGINS: http://localhost:8080,http://127.0.0.1:8080
+      # API 密钥走 secrets 文件挂载（/run/secrets/），不进环境变量，docker inspect 不可见。
+      # 文件缺失时回退到 env_file 注入的同名变量（见 config.py 的 *_KEY_FILE 支持）
+      DEEPSEEK_API_KEY_FILE: /run/secrets/deepseek_api_key
+      OPENAI_API_KEY_FILE: /run/secrets/openai_api_key
+      TAVILY_API_KEY_FILE: /run/secrets/tavily_api_key
+      RAG_EMBEDDING_API_KEY_FILE: /run/secrets/rag_embedding_api_key
     # .env 提供密钥/模型等业务配置；文件不存在时也不阻塞启动
     env_file:
       - path: .env
@@ -63,6 +93,8 @@ services:
       - "8001:8000"
     volumes:
       - backend-uploads:/app/backend/uploads
+      # secrets 目录只读挂载，密钥文件在容器内不可被写
+      - ./secrets:/run/secrets:ro
     depends_on:
       db:
         condition: service_healthy
@@ -74,6 +106,25 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+    # 纵深防御：非 root（见 Dockerfile）+ 丢弃全部 capability + 禁止提权 + 只读根文件系统
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/appuser
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
   worker:
@@ -84,14 +135,20 @@ services:
     container_name: aichat-worker
     command: celery -A backend.app.core.celery_worker worker --loglevel=INFO
     environment:
-      DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/aichat
-      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD}@db:5432/aichat
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      # 与 backend 相同：API 密钥优先从 secrets 文件读取
+      DEEPSEEK_API_KEY_FILE: /run/secrets/deepseek_api_key
+      OPENAI_API_KEY_FILE: /run/secrets/openai_api_key
+      TAVILY_API_KEY_FILE: /run/secrets/tavily_api_key
+      RAG_EMBEDDING_API_KEY_FILE: /run/secrets/rag_embedding_api_key
     env_file:
       - path: .env
         required: false
     volumes:
       # RAG 文档解析在 worker 中执行，须与 backend 共享上传目录
       - backend-uploads:/app/backend/uploads
+      - ./secrets:/run/secrets:ro
     depends_on:
       db:
         condition: service_healthy
@@ -103,6 +160,24 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/appuser
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
   frontend:
@@ -122,6 +197,16 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.25"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
 

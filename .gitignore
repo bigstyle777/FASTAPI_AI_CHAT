@@ -1,4 +1,8 @@
 .env
+# Docker secrets（API 密钥文件，绝不入库）
+secrets/
+# 数据库备份
+backups/
 .venv/
 venv/
 __pycache__/

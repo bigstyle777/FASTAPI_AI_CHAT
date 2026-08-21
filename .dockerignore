@@ -1,8 +1,9 @@
-# 版本控制 / 本地环境（绝不进入镜像，.env 含密钥）
+# 版本控制 / 本地环境（绝不进入镜像，.env 与 secrets/ 含密钥）
 .git
 .venv
 .env
 .workbuddy
+secrets
 
 # 依赖与构建产物
 **/node_modules

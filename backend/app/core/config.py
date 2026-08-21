@@ -1,4 +1,5 @@
 from functools import lru_cache
+import os
 from pathlib import Path
 
 from pydantic import model_validator
@@ -55,6 +56,19 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def fill_derived_defaults(self):
+        # Docker secrets 惯例：<FIELD>_FILE 指向只读文件时，优先读取文件内容作为密钥。
+        # 容器内由 compose 挂载 ./secrets -> /run/secrets 并注入 *_KEY_FILE 变量，
+        # 避免密钥出现在环境变量（docker inspect 可见）；文件缺失时回退 env_file 注入。
+        for field in ("deepseek_api_key", "openai_api_key", "tavily_api_key", "rag_embedding_api_key"):
+            if getattr(self, field) is None:
+                file_env = os.environ.get(f"{field.upper()}_FILE")
+                if file_env:
+                    try:
+                        content = Path(file_env).read_text(encoding="utf-8").strip()
+                        if content:
+                            setattr(self, field, content)
+                    except OSError:
+                        pass
         if not self.openai_model:
             self.openai_model = self.ai_model or "gpt-4o-mini"
         if not self.deepseek_model:

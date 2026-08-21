@@ -1,6 +1,6 @@
 # 后端镜像：api 服务与 celery worker 共用（compose 中以不同 command 启动）
 # 构建上下文为项目根目录（见 docker-compose.yml 的 build.context）
-FROM python:3.12-slim
+FROM python:3.12.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -14,6 +14,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # 后端源码（tests / examples / uploads / .env 已被根 .dockerignore 排除）
 COPY backend ./backend
+
+# 非 root 运行：创建低权限用户；uploads 目录先创建并归属 appuser，
+# 使 backend-uploads 命名卷首次挂载时继承正确属主（copy-on-first-use）
+RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser \
+    && mkdir -p /app/backend/uploads \
+    && chown -R appuser:appuser /app
+
+USER appuser
 
 EXPOSE 8000
 
