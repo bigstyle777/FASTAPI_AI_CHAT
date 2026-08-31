@@ -6,8 +6,8 @@ from sqlalchemy.orm import Session
 
 from ..core.database import get_db
 from ..schemas import ActionResponse
-from ..services.auth import get_current_user
-from .schemas import RagDocumentListResponse, RagSearchResponse, RagUploadResponse
+from services.auth import get_current_user
+from .schemas import RagDocumentListResponse, RagSearchResponse
 from .service import (
     delete_document_service,
     list_documents_service,

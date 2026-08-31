@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from ..core.database import get_db
 from ..schemas import ChatRequest
-from ..services.auth import get_current_user
+from services.auth import get_current_user
 from .repo import get_agent_run, list_agent_runs
 from .schemas import AgentRunListResponse, AgentRunResponse
 from .service import agent_stream_service

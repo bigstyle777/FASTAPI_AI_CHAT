@@ -9,18 +9,18 @@ from ..core.sse import sse_event
 from ..crud import get_session_by_user
 from ..exceptions import BusinessError
 from ..schemas import StreamErrorEvent, StreamUsageEvent, TokenUsage
-from ..services.cache import (
+from backend.app.core.cache import (
     check_rate_limit,
     clear_generation_status,
     is_stop_requested,
 )
-from ..services.ai_client import get_client, get_user_ai_settings
+from backend.llm.ai_client import get_client, get_user_ai_settings
 from ..services.message_context import load_chat_context
 from ..services.message_persistence import (
     persist_assistant_message,
     persist_user_message,
 )
-from ..services.task.memory_queue import enqueue_memory_extraction
+from backend.app.task import enqueue_memory_extraction
 from .agent import run_agent_stream
 from .events import AgentDoneEvent, AgentPlanEvent
 from .repo import create_agent_run, update_agent_run

@@ -15,8 +15,8 @@ from .core.redis import RedisUnavailableError
 from .exceptions import BusinessError
 from .rag.router import router as rag_router
 from .routers import admin, chat, memory, users
-from .services.auth import resolve_current_user_context
-from .services.rbac import ensure_bootstrap_admin, sync_default_rbac
+from services.auth import resolve_current_user_context
+from admin.service.rbac import ensure_bootstrap_admin, sync_default_rbac
 
 # 尽早配置：uvicorn 导入本模块时接管日志格式，后续所有模块的 logger 统一生效
 configure_logging()
