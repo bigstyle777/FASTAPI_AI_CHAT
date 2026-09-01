@@ -7,7 +7,7 @@
 
 from typing import Any, Generator
 
-from ..schemas import StreamDeltaEvent, StreamErrorEvent, StreamUsageEvent, TokenUsage
+from ..chat.schemas import StreamDeltaEvent, StreamErrorEvent, StreamUsageEvent, TokenUsage
 from ..tools import ALL_TOOLS
 from .events import AgentPlanEvent, AgentStepEvent
 from .executor import execute_step

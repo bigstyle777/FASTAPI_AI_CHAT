@@ -19,7 +19,7 @@ from app.agent.events import AgentPlanEvent, AgentStepEvent, AgentToolEvent
 from app.agent.executor import execute_step
 from app.agent.planner import _extract_json, create_plan
 from app.agent.state import AgentState, PlanStep
-from app.schemas import StreamDeltaEvent, StreamUsageEvent
+from app.chat.schemas import StreamDeltaEvent, StreamUsageEvent
 
 
 # ---------------------------------------------------------------------------

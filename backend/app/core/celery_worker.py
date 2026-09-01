@@ -11,8 +11,8 @@ celery_app = Celery(
     broker=settings.redis_url,
     backend=settings.redis_url,
     include=[
-        f"{_PACKAGE_ROOT}.services.task.title_tasks",
-        f"{_PACKAGE_ROOT}.services.task.memory_tasks",
+        f"{_PACKAGE_ROOT}.task.title_tasks",
+        f"{_PACKAGE_ROOT}.task.memory_tasks",
         f"{_PACKAGE_ROOT}.rag.tasks",
     ],
 )

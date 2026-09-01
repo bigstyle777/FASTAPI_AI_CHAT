@@ -1,4 +1,7 @@
-from ..crud import (
+from ...core.cache import delete_chat_context
+from ...core.constants import BRANCH_TITLE_PREFIX
+from core.exceptions import BusinessError
+from ..repository import (
     create_message,
     create_session,
     get_message_by_id,
@@ -6,9 +9,6 @@ from ..crud import (
     get_session_by_user,
     update_session,
 )
-from ..exceptions import BusinessError
-from ..services.cache import delete_chat_context
-from ..services.constants import BRANCH_TITLE_PREFIX
 from .message_context import save_chat_context
 
 

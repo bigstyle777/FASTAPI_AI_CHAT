@@ -19,10 +19,11 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from app.agent.trace import AgentTracer, NullTracer  # noqa: E402
+from app.admin.repository import create_role, get_role_by_name  # noqa: E402
 from app.agent.repo import create_agent_run, get_trace_points  # noqa: E402
-from app.crud import create_role, create_user, get_role_by_name  # noqa: E402
-from app.models import ChatSession  # noqa: E402
+from app.agent.trace import AgentTracer, NullTracer  # noqa: E402
+from app.chat.models import ChatSession  # noqa: E402
+from app.user.repository import create_user  # noqa: E402
 
 
 def _make_run(db, tag="trace"):

@@ -6,9 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
+from ..chat.schemas import ChatRequest
 from ..core.database import get_db
-from ..schemas import ChatRequest
-from services.auth import get_current_user
+from ..user.services.auth import get_current_user
 from .repo import get_agent_run, list_agent_runs
 from .schemas import AgentRunListResponse, AgentRunResponse
 from .service import agent_stream_service

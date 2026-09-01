@@ -3,10 +3,10 @@
 import json
 import logging
 
-from .ai_client import get_client, get_user_ai_settings
-from .task.memory_queue import enqueue_memory_embedding
+from ...core.ai_client import get_client, get_user_ai_settings
+from ...task.memory_queue import enqueue_memory_embedding
 
-from ..crud import create_memory
+from ..repository import create_memory
 
 logger = logging.getLogger(__name__)
 

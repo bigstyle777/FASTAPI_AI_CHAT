@@ -4,25 +4,29 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 
-from services.captcha import _verify_captcha
-from admin.service.rbac import build_user_context, get_default_role, sync_default_rbac
-from backend.app.core import redis
-from backend.app.core.config import settings
-from backend.app.core.database import get_db
-from backend.app.core.security import (
+from ...admin.service.rbac import (
+    build_user_context,
+    get_default_role,
+    sync_default_rbac,
+)
+from ...core import redis
+from ...core.config import settings
+from ...core.database import get_db
+from ...core.security import (
     create_access_token,
     decode_token,
     hash_password,
     token_digest,
     verify_password,
 )
-from backend.app.crud import create_user, get_user_by_id, get_user_by_username
-from backend.app.exceptions import BusinessError
+from core.exceptions import BusinessError
+from ..repository import create_user, get_user_by_id, get_user_by_username
+from .captcha import _verify_captcha
 
 SECRET_KEY = settings.jwt_secret_key
 ALGORITHM = settings.jwt_algorithm
 ACCESS_TOKEN_TTL_SECONDS = settings.access_token_ttl_seconds
-USER_CACHE_TTL_SECONDS = settings.user_vcache_ttl_seconds
+USER_CACHE_TTL_SECONDS = settings.user_cache_ttl_seconds
 TOKEN_KEY_PREFIX = "auth:token:"
 USER_KEY_PREFIX = "user:profile:"
 

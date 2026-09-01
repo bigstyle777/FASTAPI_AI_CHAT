@@ -7,17 +7,19 @@ from fastapi import Depends, HTTPException, status
 
 logger = logging.getLogger(__name__)
 
-from backend.app.core.security import hash_password
-from backend.app.crud import (
+from ...core.security import hash_password
+from ...user.repository import (
+    create_user,
+    get_user_by_username,
+    get_users_with_roles,
+)
+from ..repository import (
     create_permission,
     create_role,
-    create_user,
     get_permission_by_code,
     get_role_by_id,
     get_role_by_name,
     get_roles,
-    get_user_by_username,
-    get_users_with_roles,
     replace_role_permissions,
 )
 
@@ -121,7 +123,7 @@ def get_accessible_permissions(db, user) -> set[str]:
 def require_permissions(*permissions: str):
     required = set(permissions)
 
-    from services.auth import get_current_user
+    from ...user.services.auth import get_current_user
 
     def dependency(current_user: dict[str, Any] = Depends(get_current_user)):
         user_permissions = set(current_user.get("permissions", []))
@@ -138,7 +140,7 @@ def require_permissions(*permissions: str):
 def require_roles(*roles: str):
     required = set(roles)
 
-    from services.auth import get_current_user
+    from ...user.services.auth import get_current_user
 
     def dependency(current_user: dict[str, Any] = Depends(get_current_user)):
         if current_user.get("role") not in required:

@@ -2,7 +2,7 @@
 
 from typing import Generator
 
-from ..schemas import StreamDeltaEvent, StreamUsageEvent, TokenUsage
+from ..chat.schemas import StreamDeltaEvent, StreamUsageEvent, TokenUsage
 from .prompts import FINALIZER_SYSTEM_PROMPT
 from .trace import NullTracer
 

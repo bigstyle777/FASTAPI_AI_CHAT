@@ -14,7 +14,7 @@ import logging
 from time import perf_counter
 from typing import Any, Callable, Generator
 
-from ..schemas import StreamDeltaEvent, StreamUsageEvent, TokenUsage
+from ..chat.schemas import StreamDeltaEvent, StreamUsageEvent, TokenUsage
 from ..tools import ALL_TOOLS, TOOL_REGISTRY
 
 logger = logging.getLogger(__name__)

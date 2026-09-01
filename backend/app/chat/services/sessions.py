@@ -1,6 +1,9 @@
 from sqlalchemy.orm import Session
 
-from ..crud import (
+from ...core.cache import delete_chat_context
+from ...core.constants import DEFAULT_SESSION_TITLE
+from core.exceptions import BusinessError
+from ..repository import (
     create_session,
     delete_empty_sessions_by_user,
     delete_messages_by_session,
@@ -10,9 +13,6 @@ from ..crud import (
     session_has_messages,
     update_session,
 )
-from ..exceptions import BusinessError
-from ..services.cache import delete_chat_context
-from ..services.constants import DEFAULT_SESSION_TITLE
 
 
 def _format_dt(value):

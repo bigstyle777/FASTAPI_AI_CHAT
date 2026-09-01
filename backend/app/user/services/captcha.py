@@ -2,8 +2,8 @@ import base64
 import random
 import uuid
 
-from backend.app.core import redis
-from backend.app.core.config import settings
+from ...core import redis
+from ...core.config import settings
 
 CAPTCHA_TTL_SECONDS = settings.captcha_ttl_seconds
 CAPTCHA_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"

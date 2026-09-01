@@ -3,8 +3,8 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import RagChunk, RagChunkEmbedding, RagDocument
 from .embedding import embed_query
+from .models import RagChunk, RagChunkEmbedding, RagDocument
 
 
 @dataclass(frozen=True)

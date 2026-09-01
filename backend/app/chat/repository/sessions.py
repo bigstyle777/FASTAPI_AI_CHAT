@@ -3,7 +3,7 @@ from datetime import datetime
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from ...models import ChatSession, Message
+from ..models import ChatSession, Message
 
 
 def create_session(

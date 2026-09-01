@@ -4,9 +4,9 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from .task.memory_queue import enqueue_memory_embedding
+from ...task.memory_queue import enqueue_memory_embedding
 
-from ..crud import (
+from ..repository import (
     create_memory,
     delete_memory,
     delete_memory_embeddings,

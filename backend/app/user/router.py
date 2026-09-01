@@ -3,8 +3,9 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
+from ..core.cache import check_rate_limit
 from ..core.database import get_db
-from ..schemas import (
+from .schemas import (
     CaptchaResponse,
     LoginRequest,
     LoginResponse,
@@ -14,7 +15,7 @@ from ..schemas import (
     SettingsResponse,
     UserProfileResponse,
 )
-from services.auth import (
+from .services.auth import (
     get_current_token,
     get_current_user,
     get_user_profile_service,
@@ -22,9 +23,8 @@ from services.auth import (
     logout_user,
     register_user,
 )
-from backend.app.core.cache import check_rate_limit
-from services.captcha import create_captcha_service
-from ..services.settings import get_settings_service, save_settings_service
+from .services.captcha import create_captcha_service
+from .services.settings import get_settings_service, save_settings_service
 
 router = APIRouter(prefix="/users", tags=["Users"])
 CurrentUser = Annotated[dict[str, Any], Depends(get_current_user)]

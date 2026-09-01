@@ -1,8 +1,8 @@
 from sqlalchemy.orm import Session
 
+from ...agent.tool_calling import run_tool_loop, stream_with_tools
+from ...core.ai_client import get_client, get_user_ai_settings
 from ..schemas import StreamErrorEvent
-from ..services.ai_client import get_client, get_user_ai_settings
-from .tool_calling import run_tool_loop, stream_with_tools
 
 
 def _build_fallback_reply(messages: list, api_key=None, error=None):

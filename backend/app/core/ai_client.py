@@ -1,6 +1,6 @@
 """AI 客户端工厂与用户 AI 设置解析。
 
-供聊天、标题生成、记忆提取、Agent 共用，避免这些基础设施职责堆在 llm.py 里。
+供聊天、标题生成、记忆提取、Agent 共用，避免这些基础设施职责堆在各业务域里。
 """
 
 try:
@@ -10,8 +10,8 @@ except Exception:  # pragma: no cover - optional dependency fallback
 
 from sqlalchemy.orm import Session
 
-from backend.app.core.config import settings
-from backend.app.crud import get_user_settings
+from ..user.repository import get_user_settings
+from .config import settings
 
 
 def get_client(api_key=None, provider="deepseek"):

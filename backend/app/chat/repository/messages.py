@@ -2,7 +2,7 @@ from datetime import datetime
 
 from sqlalchemy import delete, select
 
-from ...models import ChatSession, Message
+from ..models import ChatSession, Message
 
 
 def get_message_by_id(db, message_id, user_id):

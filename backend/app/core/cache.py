@@ -1,5 +1,5 @@
-from backend.app.core import redis
-from backend.app.core.config import settings
+from . import redis
+from .config import settings
 
 
 # 上下文缓存

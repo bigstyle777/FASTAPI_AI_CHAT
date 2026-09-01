@@ -19,9 +19,8 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-import app.services.tool_calling as tool_calling  # noqa: E402
-from app.schemas import StreamDeltaEvent, StreamUsageEvent  # noqa: E402
-from app.services.tool_calling import (  # noqa: E402
+import app.agent.tool_calling as tool_calling  # noqa: E402
+from app.agent.tool_calling import (  # noqa: E402
     _assembled_tool_calls,
     _call_tool,
     _consume_stream_round,
@@ -30,6 +29,7 @@ from app.services.tool_calling import (  # noqa: E402
     run_tool_loop,
     stream_with_tools,
 )
+from app.chat.schemas import StreamDeltaEvent, StreamUsageEvent  # noqa: E402
 
 
 def _tool_call(name, arguments, call_id="call_1"):

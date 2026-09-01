@@ -23,15 +23,14 @@ if str(BACKEND_DIR) not in sys.path:
 from sqlalchemy import select  # noqa: E402
 
 import app.agent.service as agent_service  # noqa: E402
-from app.crud import (  # noqa: E402
-    create_role,
-    create_session,
-    create_user,
-    get_messages_by_session,
-    get_role_by_name,
-)
-from app.models import AgentRun, AgentTracePoint  # noqa: E402
+from app.admin.repository import create_role, get_role_by_name  # noqa: E402
+from app.agent.models import AgentRun, AgentTracePoint  # noqa: E402
 from app.agent.service import agent_stream_service  # noqa: E402
+from app.chat.repository import (  # noqa: E402
+    create_session,
+    get_messages_by_session,
+)
+from app.user.repository import create_user  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

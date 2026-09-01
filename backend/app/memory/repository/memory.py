@@ -3,7 +3,7 @@ from datetime import datetime
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from ...models import UserMemory, UserMemoryEmbedding
+from ..models import UserMemory, UserMemoryEmbedding
 
 
 def create_memory(

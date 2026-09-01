@@ -24,23 +24,23 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from app.core.config import settings  # noqa: E402
-from app.core.security import verify_password  # noqa: E402
-from app.crud import get_user_by_username  # noqa: E402
-from app.services.auth import (  # noqa: E402
-    login_user,
-    logout_user,
-    register_user,
-    resolve_current_user_context,
-)
-from app.services.captcha import create_captcha_service  # noqa: E402
-from app.services.rbac import (  # noqa: E402
+from app.admin.service.rbac import (  # noqa: E402
     ensure_bootstrap_admin,
     require_permissions,
     set_role_permissions,
     sync_default_rbac,
 )
-from app.services.settings import (  # noqa: E402
+from app.core.config import settings  # noqa: E402
+from app.core.security import verify_password  # noqa: E402
+from app.user.repository import get_user_by_username  # noqa: E402
+from app.user.services.auth import (  # noqa: E402
+    login_user,
+    logout_user,
+    register_user,
+    resolve_current_user_context,
+)
+from app.user.services.captcha import create_captcha_service  # noqa: E402
+from app.user.services.settings import (  # noqa: E402
     get_settings_service,
     save_settings_service,
 )
@@ -191,7 +191,8 @@ def test_captcha_is_single_use(db, _mock_redis):
 
 
 def _user_ctx(db, username="carol"):
-    from app.crud import create_role, create_user, get_role_by_name
+    from app.admin.repository import create_role, get_role_by_name
+    from app.user.repository import create_user
 
     role = get_role_by_name(db, "user")
     if role is None:
@@ -283,7 +284,7 @@ def test_save_settings_roundtrip_updates_db_and_cache(db, _mock_redis):
 
 
 def _snapshot_rbac(db):
-    from app.crud import get_roles
+    from app.admin.repository import get_roles
 
     return {
         role.name: sorted(p.code for p in role.permissions if p) for role in get_roles(db)
@@ -316,7 +317,7 @@ def test_require_permissions_allows_and_denies():
 
 def test_set_role_permissions_rejects_unknown_code(db):
     sync_default_rbac(db)
-    from app.crud import get_role_by_name
+    from app.admin.repository import get_role_by_name
 
     role = get_role_by_name(db, "user")
     with pytest.raises(HTTPException) as exc_info:
@@ -326,7 +327,7 @@ def test_set_role_permissions_rejects_unknown_code(db):
 
 def test_set_role_permissions_replaces(db):
     sync_default_rbac(db)
-    from app.crud import get_role_by_name
+    from app.admin.repository import get_role_by_name
 
     role = get_role_by_name(db, "user")
     set_role_permissions(db, role.id, ["chat:read"])

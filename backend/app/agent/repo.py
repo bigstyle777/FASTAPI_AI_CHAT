@@ -3,7 +3,7 @@
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ..models import AgentRun, AgentTracePoint
+from .models import AgentRun, AgentTracePoint
 
 
 def create_agent_run(

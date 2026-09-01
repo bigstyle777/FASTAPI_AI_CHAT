@@ -1,6 +1,6 @@
 from sqlalchemy import select
 
-from ...models import Permission, Role, RolePermission
+from ..models import Permission, Role, RolePermission
 
 
 def get_role_by_name(db, role_name):

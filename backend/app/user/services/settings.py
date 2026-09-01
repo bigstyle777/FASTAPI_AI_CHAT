@@ -1,6 +1,6 @@
-from ..core import redis
-from ..core.config import settings
-from ..crud import get_user_settings, save_user_settings
+from ...core import redis
+from ...core.config import settings
+from ..repository import get_user_settings, save_user_settings
 
 USER_SETTINGS_CACHE_TTL_SECONDS = settings.user_settings_cache_ttl_seconds
 

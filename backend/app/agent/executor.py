@@ -9,11 +9,11 @@
 import json
 from typing import Any
 
-from ..services.tool_calling import execute_tool_call, run_tool_loop
 from ..tools import TOOL_REGISTRY
 from .events import AgentToolEvent
 from .prompts import STEP_EXECUTOR_SYSTEM_PROMPT
 from .state import PlanStep, StepResult
+from .tool_calling import execute_tool_call, run_tool_loop
 from .trace import NullTracer
 
 

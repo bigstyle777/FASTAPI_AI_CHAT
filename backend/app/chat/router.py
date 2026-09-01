@@ -5,7 +5,8 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from ..core.database import get_db
-from ..schemas import (
+from ..user.services.auth import get_current_user
+from .schemas import (
     ActionResponse,
     ChatRequest,
     ChatSessionUpdateRequest,
@@ -16,9 +17,11 @@ from ..schemas import (
     MessageUpdateRequest,
     SessionListResponse,
 )
-from services.auth import get_current_user
-from .branch import create_branch_service, create_message_branch_service
-from .messages import (
+from .services.branch import (
+    create_branch_service,
+    create_message_branch_service,
+)
+from .services.messages import (
     delete_message_service,
     get_messages_service,
     modify_message_service,
@@ -26,7 +29,7 @@ from .messages import (
     send_message_stream_service,
     stop_generation_service,
 )
-from .sessions import (
+from .services.sessions import (
     clear_session_messages_service,
     create_session_service,
     delete_session_service,

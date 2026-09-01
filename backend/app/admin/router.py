@@ -4,14 +4,15 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ..core.database import get_db
-from ..crud import (
+from ..user.repository import get_users_with_roles
+from ..user.services.auth import get_current_user
+from .repository import (
     create_role,
     get_permissions,
     get_role_by_id,
     get_role_by_name,
-    get_users_with_roles,
 )
-from ..schemas import (
+from .schemas import (
     AdminUserResponse,
     PermissionResponse,
     RoleCreateRequest,
@@ -19,8 +20,7 @@ from ..schemas import (
     RoleResponse,
     UpdateUserRoleRequest,
 )
-from services.auth import get_current_user
-from admin.service.rbac import (
+from .service.rbac import (
     assign_role_to_user,
     build_user_context,
     get_role_permissions,

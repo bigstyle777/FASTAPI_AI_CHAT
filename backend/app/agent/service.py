@@ -5,22 +5,22 @@ from typing import Generator
 
 from sqlalchemy.orm import Session
 
-from ..core.sse import sse_event
-from ..crud import get_session_by_user
-from ..exceptions import BusinessError
-from ..schemas import StreamErrorEvent, StreamUsageEvent, TokenUsage
-from backend.app.core.cache import (
+from ..chat.repository import get_session_by_user
+from ..chat.schemas import StreamErrorEvent, StreamUsageEvent, TokenUsage
+from ..chat.services.message_context import load_chat_context
+from ..chat.services.message_persistence import (
+    persist_assistant_message,
+    persist_user_message,
+)
+from ..core.ai_client import get_client, get_user_ai_settings
+from ..core.cache import (
     check_rate_limit,
     clear_generation_status,
     is_stop_requested,
 )
-from backend.llm.ai_client import get_client, get_user_ai_settings
-from ..services.message_context import load_chat_context
-from ..services.message_persistence import (
-    persist_assistant_message,
-    persist_user_message,
-)
-from backend.app.task import enqueue_memory_extraction
+from ..core.sse import sse_event
+from core.exceptions import BusinessError
+from ..task.memory_queue import enqueue_memory_extraction
 from .agent import run_agent_stream
 from .events import AgentDoneEvent, AgentPlanEvent
 from .repo import create_agent_run, update_agent_run

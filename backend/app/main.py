@@ -7,16 +7,19 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from .admin.router import router as admin_router
+from .admin.service.rbac import ensure_bootstrap_admin, sync_default_rbac
 from .agent.router import router as agent_router
+from .chat.router import router as chat_router
 from .core.config import settings
 from .core.database import SessionLocal
 from .core.logging import configure_logging, new_request_id, request_id_var
 from .core.redis import RedisUnavailableError
-from .exceptions import BusinessError
+from core.exceptions import BusinessError
+from .memory.router import router as memory_router
 from .rag.router import router as rag_router
-from .routers import admin, chat, memory, users
-from services.auth import resolve_current_user_context
-from admin.service.rbac import ensure_bootstrap_admin, sync_default_rbac
+from .user.router import router as users_router
+from .user.services.auth import resolve_current_user_context
 
 # 尽早配置：uvicorn 导入本模块时接管日志格式，后续所有模块的 logger 统一生效
 configure_logging()
@@ -82,10 +85,10 @@ app.add_middleware(
 
 app.include_router(rag_router)
 app.include_router(agent_router)
-app.include_router(users.router)
-app.include_router(chat.router)
-app.include_router(memory.router)
-app.include_router(admin.router)
+app.include_router(users_router)
+app.include_router(chat_router)
+app.include_router(memory_router)
+app.include_router(admin_router)
 
 
 async def _authenticate_request(request: Request) -> JSONResponse | None:

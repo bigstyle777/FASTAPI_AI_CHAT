@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
+from ..chat.schemas import ActionResponse
 from ..core.database import get_db
-from ..schemas import ActionResponse
-from services.auth import get_current_user
+from ..user.services.auth import get_current_user
 from .schemas import RagDocumentListResponse, RagSearchResponse
 from .service import (
     delete_document_service,

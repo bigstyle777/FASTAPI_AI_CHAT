@@ -2,7 +2,7 @@ from datetime import datetime
 
 from sqlalchemy import select
 
-from ...models import UserSetting
+from ..models import UserSetting
 
 
 def get_user_settings(db, user_id):

@@ -4,8 +4,8 @@
 避免两处重复实现相同的落库逻辑。
 """
 
-from ..crud import create_message, update_session
-from ..services.task.title_queue import enqueue_session_title_generation
+from ...task.title_queue import enqueue_session_title_generation
+from ..repository import create_message, update_session
 from .message_context import get_branch_parent_message_id
 
 

@@ -12,10 +12,10 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..core.config import settings
-from ..crud import get_memories_without_embeddings, replace_memory_embeddings
+from ...core.config import settings
+from ...rag.embedding import embed_query, embed_texts, resolve_embedding_model
 from ..models import UserMemory, UserMemoryEmbedding
-from ..rag.embedding import embed_query, embed_texts, resolve_embedding_model
+from ..repository import get_memories_without_embeddings, replace_memory_embeddings
 
 logger = logging.getLogger(__name__)
 

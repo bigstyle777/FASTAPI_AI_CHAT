@@ -3,9 +3,9 @@ import re
 
 from sqlalchemy.orm import Session
 
-from ...models import ChatSession
-from backend.llm.ai_client import get_client, get_user_ai_settings
-from backend.app.core.constants import DEFAULT_SESSION_TITLE
+from ..chat.models import ChatSession
+from ..core.ai_client import get_client, get_user_ai_settings
+from ..core.constants import DEFAULT_SESSION_TITLE
 
 
 def _build_fallback_title(message: str):
