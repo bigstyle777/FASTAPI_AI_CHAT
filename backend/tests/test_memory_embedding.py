@@ -24,16 +24,18 @@ if str(BACKEND_DIR) not in sys.path:
 
 from sqlalchemy import select  # noqa: E402
 
-import app.services.memory_embedding as memory_embedding  # noqa: E402
+import app.memory.services.memory_embedding as memory_embedding  # noqa: E402
+from app.admin.repository import create_role, get_role_by_name  # noqa: E402
 from app.core.config import settings  # noqa: E402
-from app.crud import create_memory, create_role, create_user, get_role_by_name  # noqa: E402
-from app.models import UserMemoryEmbedding  # noqa: E402
-from app.services.memory_embedding import (  # noqa: E402
+from app.memory.models import UserMemoryEmbedding  # noqa: E402
+from app.memory.repository import create_memory  # noqa: E402
+from app.memory.services.memory_embedding import (  # noqa: E402
     embed_memory,
     retrieve_relevant_memories,
     split_sentences,
     sync_memory_embeddings,
 )
+from app.user.repository import create_user  # noqa: E402
 
 DIMENSION = settings.rag_embedding_dimension
 

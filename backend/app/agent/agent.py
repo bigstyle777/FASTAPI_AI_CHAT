@@ -5,9 +5,9 @@
 由 service 层转成 SSE 字符串；trace 由传入的 AgentTracer 负责落库。
 """
 
-from typing import Any, Generator
+from typing import Any, AsyncGenerator
 
-from ..schemas import StreamDeltaEvent, StreamErrorEvent, StreamUsageEvent, TokenUsage
+from ..chat.schemas import StreamDeltaEvent, StreamErrorEvent, StreamUsageEvent, TokenUsage
 from ..tools import ALL_TOOLS
 from .events import AgentPlanEvent, AgentStepEvent
 from .executor import execute_step
@@ -35,7 +35,7 @@ def _build_summary_message(
     return {"role": "user", "content": "\n".join(lines)}
 
 
-def run_agent_stream(
+async def run_agent_stream(
     client,
     model: str,
     user_input: str,
@@ -46,18 +46,18 @@ def run_agent_stream(
     should_stop=None,
     max_steps: int = 6,
     max_tool_turns: int = 5,
-) -> Generator[Any, None, None]:
+) -> AsyncGenerator[Any, None]:
     """Agent 主循环。yield 的事件由上层转成 SSE。"""
     if tracer is None:
         tracer = NullTracer()
     # ---- 1. 规划 ----
     try:
-        with tracer.span(
+        async with tracer.span(
             "plan",
             "planner",
             input_data={"messages": messages},
         ) as record:
-            plan = create_plan(
+            plan = await create_plan(
                 client,
                 model,
                 messages,
@@ -70,7 +70,7 @@ def run_agent_stream(
         return
 
     if not plan:
-        tracer.point(
+        await tracer.point(
             "plan",
             "planner",
             status="failed",
@@ -92,7 +92,7 @@ def run_agent_stream(
     stopped = False
 
     for index, step in enumerate(plan[:max_steps]):
-        if should_stop is not None and should_stop():
+        if should_stop is not None and await should_stop():
             stopped = True
             break
 
@@ -103,13 +103,13 @@ def run_agent_stream(
             status="started",
         )
 
-        with tracer.span(
+        async with tracer.span(
             "step",
             f"step_{index}",
             step_index=index,
             input_data=step.model_dump(),
         ) as record:
-            result = execute_step(
+            result = await execute_step(
                 client,
                 model,
                 step,
@@ -148,7 +148,7 @@ def run_agent_stream(
     summary_message = _build_summary_message(user_input, plan, results)
     final_answer = ""
     usage = TokenUsage()
-    for event in stream_final_answer(
+    async for event in stream_final_answer(
         client,
         model,
         [*messages, summary_message],
@@ -161,7 +161,7 @@ def run_agent_stream(
             usage = event.usage
         yield event
 
-    if should_stop is not None and should_stop():
+    if should_stop is not None and await should_stop():
         stopped = True
 
     state = AgentState(
@@ -178,7 +178,7 @@ def run_agent_stream(
     yield state
 
 
-def run_agent(
+async def run_agent(
     client,
     model: str,
     user_input: str,
@@ -190,7 +190,7 @@ def run_agent(
 ) -> AgentState:
     """非流式入口：跑完整轮并把最终状态收集起来（供测试/后续同步接口使用）。"""
     state: AgentState | None = None
-    for event in run_agent_stream(
+    async for event in run_agent_stream(
         client,
         model,
         user_input,

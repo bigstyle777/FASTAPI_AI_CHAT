@@ -19,19 +19,20 @@ Agent 框架示例（规划 -> 执行 -> 总结）
 agent_trace_points 表，可随时通过 GET /agent/runs/{run_id} 查看。
 """
 
+import asyncio
 import sys
 
 from app.agent.agent import run_agent
 from app.agent.state import AgentState
 from app.agent.trace import NullTracer
 from app.core.config import settings
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 
 class PrintTracer(NullTracer):
     """把 trace 点打印到终端的 tracer，方便不连数据库时观察执行过程。"""
 
-    def point(self, stage, name, **kwargs):
+    async def point(self, stage, name, **kwargs):
         status = kwargs.get("status", "completed")
         if status == "started":
             print(f"  [trace] {stage}.{name} 开始")
@@ -74,18 +75,20 @@ def main() -> None:
         )
         return
 
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    client = AsyncOpenAI(api_key=api_key, base_url=base_url)
     tracer = PrintTracer(run_id=0)
 
     print(f"问题: {question}\n")
 
     # 进入agent
-    state: AgentState = run_agent(
-        client,
-        model,
-        question,
-        messages=[{"role": "user", "content": question}],
-        tracer=tracer,
+    state: AgentState = asyncio.run(
+        run_agent(
+            client,
+            model,
+            question,
+            messages=[{"role": "user", "content": question}],
+            tracer=tracer,
+        )
     )
 
     print("\n===== 计划 =====")

@@ -19,18 +19,18 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+from app.core.ai_client import get_client, get_user_ai_settings
 from app.core.database import SessionLocal
-from app.models import User, UserSetting
-from app.services.ai_client import get_client, get_user_ai_settings
-from app.services.memory import (
+from app.memory.services.memory import (
     create_memory_service,
     delete_memory_service,
     get_memories_service,
 )
-from app.services.memory_extraction import (
+from app.memory.services.memory_extraction import (
     extract_memory,
     extract_memory_for_user,
 )
+from app.user.models import User, UserSetting
 from sqlalchemy import select
 
 # 覆盖不同场景的测试消息
@@ -135,7 +135,7 @@ def test_memory_crud(user_id, db):
         print("\n增删查测试全部通过 ✔")
     finally:
         # 兜底清理：如果中途断言失败，也保证测试数据被删掉
-        from app.crud import delete_memory
+        from app.memory.repository import delete_memory
 
         delete_memory(db, created.id, user_id)
 

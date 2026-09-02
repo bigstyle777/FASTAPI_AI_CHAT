@@ -3,7 +3,7 @@ from datetime import datetime
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from ..models import RagChunk, RagChunkEmbedding, RagDocument
+from .models import RagChunk, RagChunkEmbedding, RagDocument
 
 
 def create_document(

@@ -218,7 +218,7 @@ frontend/src/
 | `user_input` | Text | 用户原始任务 |
 | `plan` | JSON | 计划步骤列表(`PlanStep.model_dump()[]`) |
 | `final_answer` | Text | 最终答案 |
-| `model` | String(120) | 使用的模型名 |
+| `user_setting.py` | String(120) | 使用的模型名 |
 | `prompt_tokens` / `completion_tokens` / `total_tokens` | Integer | token 用量(默认 0) |
 | `error_message` | Text | 失败原因 |
 | `created_at` / `updated_at` | DateTime | 时间戳 |

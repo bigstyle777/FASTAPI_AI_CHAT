@@ -20,14 +20,25 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+# 显式导入全部域模型包：模型分散在各域后，Base.metadata 需要
+# 所有模型注册完成才能 create_all / TRUNCATE（跨域 relationship 才可解析）
+import app.admin.models  # noqa: E402,F401
+import app.agent.models  # noqa: E402,F401
+import app.chat.models  # noqa: E402,F401
+import app.memory.models  # noqa: E402,F401
+import app.rag.models  # noqa: E402,F401
+import app.user.models  # noqa: E402,F401
+from app.admin.repository import create_role, get_role_by_name  # noqa: E402
 from app.core.database import Base  # noqa: E402
-from app.crud import create_role, create_user, get_role_by_name  # noqa: E402
+from app.user.repository import create_user  # noqa: E402
 
 TEST_DATABASE_URL = os.getenv(
     "TEST_DATABASE_URL",
     "postgresql+psycopg://postgres:postgres@localhost:5432/aichat_test",
 )
-ADMIN_DATABASE_URL = "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
+# 管理连接（建库用）：从 TEST_DATABASE_URL 派生，仅替换库名，
+# 本地（.env 密码）与 CI（默认密码）共用同一套环境变量
+ADMIN_DATABASE_URL = TEST_DATABASE_URL.rsplit("/", 1)[0] + "/postgres"
 
 
 def _ensure_test_database() -> None:

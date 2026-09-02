@@ -13,25 +13,27 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.crud import (
+from app.admin.repository import create_role, get_role_by_name
+from app.chat.repository import (
     create_message,
-    create_role,
     create_session,
-    create_user,
     get_messages_by_session,
-    get_role_by_name,
     get_session_by_user,
 )
-from app.exceptions import BusinessError
-from app.services.branch import create_branch_service, create_message_branch_service
-from app.services.messages import delete_message_service
-from app.services.sessions import (
+from app.chat.services.branch import (
+    create_branch_service,
+    create_message_branch_service,
+)
+from app.chat.services.messages import delete_message_service
+from app.chat.services.sessions import (
     clear_session_messages_service,
     create_session_service,
     delete_session_service,
     get_sessions_service,
     update_session_service,
 )
+from app.exceptions import BusinessError
+from app.user.repository import create_user
 
 
 def _make_user(db, username="alice"):

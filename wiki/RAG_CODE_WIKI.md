@@ -202,7 +202,7 @@ rag_documents (1) ──┐
 |------|------|------|
 | `id` | Integer PK | 自增主键 |
 | `chunk_id` | FK → rag_chunks.id (CASCADE), UNIQUE | 一对一关联切片 |
-| `model` | String(120) | 生成向量的模型名 |
+| `user_setting.py` | String(120) | 生成向量的模型名 |
 | `dimension` | Integer | 向量维度（默认 1536） |
 | `embedding` | `Vector(rag_embedding_dimension)` | pgvector 向量列 |
 | `created_at` | DateTime | 创建时间 |

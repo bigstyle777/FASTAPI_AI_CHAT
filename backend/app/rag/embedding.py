@@ -10,7 +10,7 @@ except Exception:  # pragma: no cover
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
-from ..crud import get_user_settings
+from ..user.repository import get_user_settings
 
 
 def resolve_embedding_api_key(user_id: int, db: Session) -> str | None:

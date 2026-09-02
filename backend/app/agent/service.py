@@ -1,26 +1,27 @@
 """Agent 的 HTTP 服务层：接收请求、串起主循环、落库并输出 SSE。"""
 
 import logging
-from typing import Generator
+from typing import AsyncGenerator
 
 from sqlalchemy.orm import Session
 
-from ..core.sse import sse_event
-from ..crud import get_session_by_user
-from ..exceptions import BusinessError
-from ..schemas import StreamErrorEvent, StreamUsageEvent, TokenUsage
-from ..services.cache import (
+from ..chat.repository import get_session_by_user
+from ..chat.schemas import StreamErrorEvent, StreamUsageEvent, TokenUsage
+from ..chat.services.message_context import load_chat_context
+from ..chat.services.message_persistence import (
+    persist_assistant_message,
+    persist_user_message,
+)
+from ..core.ai_client import get_async_client, get_user_ai_settings
+from ..core.blocking import run_blocking
+from ..core.cache import (
     check_rate_limit,
     clear_generation_status,
     is_stop_requested,
 )
-from ..services.ai_client import get_client, get_user_ai_settings
-from ..services.message_context import load_chat_context
-from ..services.message_persistence import (
-    persist_assistant_message,
-    persist_user_message,
-)
-from ..services.task.memory_queue import enqueue_memory_extraction
+from ..core.sse import sse_event
+from ..core.exceptions import BusinessError
+from ..task.memory_queue import enqueue_memory_extraction
 from .agent import run_agent_stream
 from .events import AgentDoneEvent, AgentPlanEvent
 from .repo import create_agent_run, update_agent_run
@@ -30,10 +31,10 @@ from .trace import AgentTracer
 logger = logging.getLogger(__name__)
 
 
-def _resolve_run_status(failed: bool, session_id: int) -> str:
+async def _resolve_run_status(failed: bool, session_id: int) -> str:
     if failed:
         return "failed"
-    if is_stop_requested(session_id):
+    if await run_blocking(is_stop_requested, session_id):
         return "stopped"
     return "completed"
 
@@ -78,14 +79,15 @@ class _RunOutcome:
         return None
 
 
-def agent_stream_service(
+async def agent_stream_service(
     db: Session, user: dict, request
-) -> Generator[str, None, None]:
+) -> AsyncGenerator[str, None, None]:
     """POST /agent/stream 的 SSE 生成器。"""
     user_id = user["user_id"]
     session_id = request.session_id
 
-    allowed = check_rate_limit(
+    allowed = await run_blocking(
+        check_rate_limit,
         key=f"rate_limit:agent:{user_id}",
         limit=200,
         expire_seconds=60 * 60,
@@ -94,7 +96,7 @@ def agent_stream_service(
         yield sse_event("error", StreamErrorEvent(message="请求太频繁，请稍后重试"))
         return
 
-    clear_generation_status(session_id)
+    await run_blocking(clear_generation_status, session_id)
     run = None
     tracer = None
 
@@ -102,15 +104,18 @@ def agent_stream_service(
         message = request.message.strip()
         if not message:
             raise BusinessError("消息不能为空")
-        session = get_session_by_user(db, session_id, user_id)
+        session = await run_blocking(get_session_by_user, db, session_id, user_id)
         if not session:
             raise BusinessError("会话不存在或已删除")
 
-        user_message = persist_user_message(db, user_id, session_id, message)
+        user_message = await run_blocking(
+            persist_user_message, db, user_id, session_id, message
+        )
 
-        messages = load_chat_context(db, session_id, message)
+        messages = await run_blocking(load_chat_context, db, session_id, message)
 
-        run = create_agent_run(
+        run = await run_blocking(
+            create_agent_run,
             db,
             session_id=session_id,
             user_id=user_id,
@@ -118,8 +123,8 @@ def agent_stream_service(
         )
         tracer = AgentTracer(db, run.id)
 
-        api_key, provider = get_user_ai_settings(user_id=user_id, db=db)
-        result = get_client(api_key=api_key, provider=provider)
+        api_key, provider = await run_blocking(get_user_ai_settings, user_id=user_id, db=db)
+        result = get_async_client(api_key=api_key, provider=provider)
         if not result:
             raise BusinessError("当前 AI 服务暂不可用，请先在个人中心配置 API Key")
         client, model = result
@@ -127,22 +132,23 @@ def agent_stream_service(
         context = {"db": db, "user_id": user_id}
         outcome = _RunOutcome()
 
-        for event in run_agent_stream(
+        async for event in run_agent_stream(
             client,
             model,
             message,
             messages=messages,
             context=context,
             tracer=tracer,
-            should_stop=lambda: is_stop_requested(session_id),
+            should_stop=lambda: run_blocking(is_stop_requested, session_id),
         ):
             outcome.record(event)
             if isinstance(event, AgentState):
                 continue
             yield sse_event(event.type, event)
 
-        status = _resolve_run_status(outcome.failed, session_id)
-        update_agent_run(
+        status = await _resolve_run_status(outcome.failed, session_id)
+        await run_blocking(
+            update_agent_run,
             db,
             run.id,
             status=status,
@@ -156,7 +162,8 @@ def agent_stream_service(
         )
 
         if outcome.ai_reply.strip():
-            persist_assistant_message(
+            await run_blocking(
+                persist_assistant_message,
                 db,
                 session_id,
                 outcome.ai_reply,
@@ -166,19 +173,21 @@ def agent_stream_service(
                 total_tokens=outcome.usage.total_tokens,
                 parent_id=user_message.id,
             )
-        enqueue_memory_extraction(user_id, message)
+        await run_blocking(enqueue_memory_extraction, user_id, message)
 
         yield sse_event("done", AgentDoneEvent(run_id=run.id, status=status))
-        clear_generation_status(session_id)
+        await run_blocking(clear_generation_status, session_id)
 
     except Exception as error:
         logger.exception("Agent 运行失败")
         if tracer is not None and run is not None:
-            tracer.point(
+            await tracer.point(
                 "error",
                 "agent_failed",
                 status="failed",
                 error_message=str(error),
             )
-            update_agent_run(db, run.id, status="failed", error_message=str(error))
+            await run_blocking(
+                update_agent_run, db, run.id, status="failed", error_message=str(error)
+            )
         yield sse_event("error", StreamErrorEvent(message=f"Error: {str(error)}"))

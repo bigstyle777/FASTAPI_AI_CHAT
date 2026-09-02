@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ...exceptions import BusinessError
+from ...core.exceptions import BusinessError
 from .base import DocumentParser
 from .text import TextDocumentParser
 

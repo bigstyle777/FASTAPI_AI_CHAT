@@ -22,9 +22,9 @@ if str(BACKEND_DIR) not in sys.path:
 from sqlalchemy import select
 
 from app.agent.planner import create_plan
+from app.core.ai_client import get_client, get_user_ai_settings
 from app.core.database import SessionLocal
-from app.models import User, UserSetting
-from app.services.ai_client import get_client, get_user_ai_settings
+from app.user.models import User, UserSetting
 
 # 覆盖不同场景的测试任务（对应 weather / calculator / web_search 工具）
 TEST_TASKS = [

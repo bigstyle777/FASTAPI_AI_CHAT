@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..core.config import PROJECT_ROOT, settings
 from ..core.sse import sse_event
-from ..exceptions import BusinessError
+from ..core.exceptions import BusinessError
 from .crud import (
     create_document,
     delete_document,

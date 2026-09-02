@@ -26,17 +26,18 @@ from fastapi import UploadFile  # noqa: E402
 from sqlalchemy import select  # noqa: E402
 
 import app.rag.service as rag_service  # noqa: E402
+from app.admin.repository import create_role, get_role_by_name  # noqa: E402
 from app.core.config import settings  # noqa: E402
-from app.crud import create_role, create_user, get_role_by_name  # noqa: E402
 from app.exceptions import BusinessError  # noqa: E402
-from app.models import RagChunk, RagChunkEmbedding, RagDocument  # noqa: E402
 from app.rag.crud import create_document  # noqa: E402
+from app.rag.models import RagChunk, RagChunkEmbedding, RagDocument  # noqa: E402
 from app.rag.service import (  # noqa: E402
     delete_document_service,
     index_document,
     process_document,
     stream_upload_document_service,
 )
+from app.user.repository import create_user  # noqa: E402
 
 
 def _make_user_id(db):
