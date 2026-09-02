@@ -11,6 +11,7 @@
     ..\\.venv\\Scripts\\python.exe -m pytest tests\\test_agent_service.py -v
 """
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -94,9 +95,9 @@ class _ScriptedCompletions:
             _StreamChunk(usage=_FakeUsage(prompt_tokens=20, completion_tokens=10, total_tokens=30)),
         ]
 
-    def create(self, **kwargs):
+    async def create(self, **kwargs):
         if kwargs.get("stream"):
-            return iter(self.final_chunks)
+            return self._astream()
 
         for message in kwargs["messages"]:
             if message.get("role") == "system":
@@ -111,6 +112,10 @@ class _ScriptedCompletions:
                         choices=[_FakeChoice(message=_FakeMessage("步骤完成"))]
                     )
         return SimpleNamespace(choices=[_FakeChoice(message=_FakeMessage("ok"))])
+
+    async def _astream(self):
+        for chunk in self.final_chunks:
+            yield chunk
 
 
 def _make_client(**kwargs):
@@ -137,11 +142,23 @@ def _parse_sse(event_str: str) -> tuple[str, dict]:
     return lines[0].removeprefix("event: "), json.loads(lines[1].removeprefix("data: "))
 
 
+def _run_agent_service(db, user, request):
+    """同步跑完异步 agent_stream_service，把解析后的 SSE 事件收成列表。"""
+
+    async def collect():
+        out = []
+        async for event in agent_stream_service(db, user, request):
+            out.append(event)
+        return out
+
+    return [_parse_sse(event) for event in asyncio.run(collect())]
+
+
 def _patch_client(monkeypatch, client):
-    """让 get_client 返回假 client（绕过 API Key 配置）。"""
+    """让 get_async_client 返回假 client（绕过 API Key 配置）。"""
     monkeypatch.setattr(
         agent_service,
-        "get_client",
+        "get_async_client",
         lambda api_key=None, provider=None: (client, "fake-model"),
     )
 
@@ -155,10 +172,7 @@ def test_agent_stream_success_persists_everything(db, monkeypatch):
     user, session = _make_session(db)
     _patch_client(monkeypatch, _make_client())
 
-    events = [
-        _parse_sse(e)
-        for e in agent_stream_service(db, {"user_id": user.id}, _request(session.id))
-    ]
+    events = _run_agent_service(db, {"user_id": user.id}, _request(session.id))
 
     # 事件序列：plan -> step started -> tool started/completed -> step completed -> delta -> usage -> done
     types = [name for name, _ in events]
@@ -200,10 +214,8 @@ def test_agent_stream_user_message_content(db, monkeypatch):
     user, session = _make_session(db, tag="msg")
     _patch_client(monkeypatch, _make_client())
 
-    list(
-        agent_stream_service(
-            db, {"user_id": user.id}, _request(session.id, message="  帮我算 2+3  ")
-        )
+    _run_agent_service(
+        db, {"user_id": user.id}, _request(session.id, message="  帮我算 2+3  ")
     )
 
     messages = get_messages_by_session(db, session.id)
@@ -217,34 +229,27 @@ def test_agent_stream_user_message_content(db, monkeypatch):
 
 def test_agent_stream_rejects_missing_session(db):
     user, _ = _make_session(db, tag="miss")
-    events = [
-        _parse_sse(e)
-        for e in agent_stream_service(db, {"user_id": user.id}, _request(999999))
-    ]
+    events = _run_agent_service(
+        db, {"user_id": user.id}, _request(999999)
+    )
     assert events[-1][0] == "error"
     assert "会话不存在" in events[-1][1]["message"]
 
 
 def test_agent_stream_rejects_blank_message(db):
     user, session = _make_session(db, tag="blank")
-    events = [
-        _parse_sse(e)
-        for e in agent_stream_service(
-            db, {"user_id": user.id}, _request(session.id, message="   ")
-        )
-    ]
+    events = _run_agent_service(
+        db, {"user_id": user.id}, _request(session.id, message="   ")
+    )
     assert events[-1][0] == "error"
     assert "不能为空" in events[-1][1]["message"]
 
 
 def test_agent_stream_without_client_reports_error(db, monkeypatch):
     user, session = _make_session(db, tag="nokey")
-    monkeypatch.setattr(agent_service, "get_client", lambda api_key=None, provider=None: None)
+    monkeypatch.setattr(agent_service, "get_async_client", lambda api_key=None, provider=None: None)
 
-    events = [
-        _parse_sse(e)
-        for e in agent_stream_service(db, {"user_id": user.id}, _request(session.id))
-    ]
+    events = _run_agent_service(db, {"user_id": user.id}, _request(session.id))
     assert events[-1][0] == "error"
     assert "API Key" in events[-1][1]["message"]
     # 用户消息已落库，但没有 assistant 回复
@@ -256,10 +261,7 @@ def test_agent_stream_planner_failure_marks_run_failed(db, monkeypatch):
     user, session = _make_session(db, tag="fail")
     _patch_client(monkeypatch, _make_client(fail_plan=True))
 
-    events = [
-        _parse_sse(e)
-        for e in agent_stream_service(db, {"user_id": user.id}, _request(session.id))
-    ]
+    events = _run_agent_service(db, {"user_id": user.id}, _request(session.id))
 
     # 规划失败：流里有 error 事件，末尾以 status=failed 的 done 终结
     types = [name for name, _ in events]
@@ -278,10 +280,7 @@ def test_agent_stream_rate_limited(db, monkeypatch):
     _patch_client(monkeypatch, _make_client())
     monkeypatch.setattr(agent_service, "check_rate_limit", lambda **kwargs: False)
 
-    events = [
-        _parse_sse(e)
-        for e in agent_stream_service(db, {"user_id": user.id}, _request(session.id))
-    ]
+    events = _run_agent_service(db, {"user_id": user.id}, _request(session.id))
     assert events[-1][0] == "error"
     assert "频繁" in events[-1][1]["message"]
     # 没有创建 run

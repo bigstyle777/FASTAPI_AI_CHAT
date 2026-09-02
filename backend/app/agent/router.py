@@ -19,7 +19,7 @@ Database = Annotated[Session, Depends(get_db)]
 
 
 @router.post("/stream")
-def agent_stream(request: ChatRequest, user: CurrentUser, db: Database):
+async def agent_stream(request: ChatRequest, user: CurrentUser, db: Database):
     """流式运行一个 agent：规划 -> 逐步执行 -> 总结，全程 SSE 推送。"""
     return StreamingResponse(
         agent_stream_service(db, user, request),

@@ -9,15 +9,21 @@ from fastapi.responses import JSONResponse
 
 from .admin.router import router as admin_router
 from .admin.service.rbac import ensure_bootstrap_admin, sync_default_rbac
+from .agent.mcp_client import (
+    close_mcp,
+    connect_calculator_server,
+    discover_and_register_mcp_tools,
+)
 from .agent.router import router as agent_router
 from .chat.router import router as chat_router
 from .core.config import settings
 from .core.database import SessionLocal
 from .core.logging import configure_logging, new_request_id, request_id_var
 from .core.redis import RedisUnavailableError
-from core.exceptions import BusinessError
+from .core.exceptions import BusinessError
 from .memory.router import router as memory_router
 from .rag.router import router as rag_router
+from .tools import ALL_TOOLS, TOOL_REGISTRY
 from .user.router import router as users_router
 from .user.services.auth import resolve_current_user_context
 
@@ -38,8 +44,18 @@ async def lifespan(app: FastAPI):
             settings.bootstrap_admin_username,
             settings.bootstrap_admin_password,
         )
+    # 启动时建立 MCP Server 连接（仅一次），发现的工具注册进现有工具体系；
+    # 失败只记录日志，不影响应用启动（本地工具仍可用）
+    try:
+        connect_calculator_server()
+        mcp_tools = discover_and_register_mcp_tools(ALL_TOOLS, TOOL_REGISTRY)
+        logger.info("MCP 工具注册完成: %s", mcp_tools or "无")
+    except Exception:
+        logger.exception("MCP Server 连接失败，MCP 工具不可用")
+
     logger.info("应用启动完成，安全初始化已执行")
     yield
+    close_mcp()
 
 
 def _validate_jwt_secret():

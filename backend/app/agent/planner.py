@@ -41,7 +41,7 @@ def _extract_json(text: str) -> dict[str, Any]:
     return json.loads(content[start : end + 1])
 
 
-def create_plan(
+async def create_plan(
     client,
     model: str,
     messages: list[dict],
@@ -67,10 +67,10 @@ def create_plan(
 
     try:
         kwargs["response_format"] = {"type": "json_object"}
-        response = client.chat.completions.create(**kwargs)
+        response = await client.chat.completions.create(**kwargs)
     except Exception:
         kwargs.pop("response_format", None)
-        response = client.chat.completions.create(**kwargs)
+        response = await client.chat.completions.create(**kwargs)
 
     content = response.choices[0].message.content or "{}"
     data = _extract_json(content)

@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from ..chat.schemas import ActionResponse
 from ..core.database import get_db
-from core.exceptions import BusinessError
+from ..core.exceptions import BusinessError
 from ..user.services.auth import get_current_user
 from .schemas import (
     MemoryCreateRequest,

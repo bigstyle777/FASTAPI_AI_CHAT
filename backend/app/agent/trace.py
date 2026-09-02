@@ -1,19 +1,24 @@
-"""Agent trace：把运行过程的关键节点写入数据库，方便事后查错。"""
+"""Agent trace：把运行过程的关键节点写入数据库，方便事后查错。
+
+写库是同步的（SQLAlchemy + psycopg），会阻塞调用线程，所以这里所有落库操作
+都通过 ``run_blocking`` 丢回线程池，避免在 agent 主循环里卡住事件循环。
+"""
 
 import time
-from contextlib import contextmanager
+from contextlib import asynccontextmanager
 from typing import Any
 
 from sqlalchemy.orm import Session
 
+from ..core.blocking import run_blocking
 from .models import AgentTracePoint
 
 
 class AgentTracer:
     """向 agent_runs 关联的 agent_trace_points 表追加 trace 点。
 
-    - `point()` 立即写一条记录；
-    - `span()` 自动记录 started / completed / failed 两条记录并附带耗时；
+    - `await point()` 立即写一条记录；
+    - `async with span()` 自动记录 started / completed / failed 两条记录并附带耗时；
     - `emit()` 收集需要推送给前端的结构化事件（如工具调用），
       由 agent 主循环在合适的时机 drain 并 yield。
     """
@@ -29,7 +34,13 @@ class AgentTracer:
         self._sequence += 1
         return sequence
 
-    def point(
+    def _write(self, point: AgentTracePoint) -> AgentTracePoint:
+        """同步落库（在线程池里执行）。"""
+        self.db.add(point)
+        self.db.commit()
+        return point
+
+    async def point(
         self,
         stage: str,
         name: str,
@@ -57,12 +68,10 @@ class AgentTracer:
             error_message=error_message,
             duration_ms=duration_ms,
         )
-        self.db.add(point)
-        self.db.commit()
-        return point
+        return await run_blocking(self._write, point)
 
-    @contextmanager
-    def span(
+    @asynccontextmanager
+    async def span(
         self,
         stage: str,
         name: str,
@@ -73,7 +82,7 @@ class AgentTracer:
     ):
         """记录一段工作：开始一条 started，结束一条 completed / failed。"""
         started_at = time.perf_counter()
-        self.point(
+        await self.point(
             stage,
             name,
             status="started",
@@ -86,7 +95,7 @@ class AgentTracer:
             yield record
         except Exception as error:
             duration_ms = _elapsed_ms(started_at)
-            self.point(
+            await self.point(
                 stage,
                 name,
                 status="failed",
@@ -99,7 +108,7 @@ class AgentTracer:
             raise
         else:
             duration_ms = _elapsed_ms(started_at)
-            self.point(
+            await self.point(
                 stage,
                 name,
                 status="failed" if record.failed else "completed",
@@ -136,16 +145,20 @@ class _SpanRecord:
 
 
 class NullTracer:
-    """不落库的兜底 tracer：executor/finalizer 在没有 tracer 时也能跑。"""
+    """不落库的兜底 tracer：executor/finalizer 在没有 tracer 时也能跑。
+
+    接口与 AgentTracer 保持一致（方法都是 async），这样调用方不用区分
+    手里拿的是真 tracer 还是空实现。
+    """
 
     def __init__(self, run_id: int = 0):
         self.run_id = run_id
 
-    def point(self, *args, **kwargs):
+    async def point(self, *args, **kwargs):
         return None
 
-    @contextmanager
-    def span(self, *args, **kwargs):
+    @asynccontextmanager
+    async def span(self, *args, **kwargs):
         record = _SpanRecord()
         try:
             yield record

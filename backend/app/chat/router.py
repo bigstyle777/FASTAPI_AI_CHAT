@@ -94,8 +94,8 @@ def delete_messages(
 
 # message增删改查
 @router.post("/message")
-def send_message(request: ChatRequest, user: CurrentUser, db: Database):
-    return send_message_service(db, user, request)
+async def send_message(request: ChatRequest, user: CurrentUser, db: Database):
+    return await send_message_service(db, user, request)
 
 
 @router.delete("/messages/{message_id}", response_model=ActionResponse)
@@ -104,7 +104,7 @@ def delete_message_api(message_id: int, user: CurrentUser, db: Database):
 
 
 @router.put("/messages/{message_id}/stream")
-def modify_message_api(
+async def modify_message_api(
     message_id: int, request: MessageUpdateRequest, user: CurrentUser, db: Database
 ):
     return StreamingResponse(
@@ -119,7 +119,7 @@ def modify_message_api(
 
 
 @router.post("/stream")
-def chat_stream(
+async def chat_stream(
     request: ChatRequest,
     user: CurrentUser,
     db: Database,

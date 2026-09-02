@@ -18,14 +18,17 @@ from .trace import NullTracer
 
 
 def _tool_callbacks(tracer, step_index: int):
-    """把工具调用过程同时落到 trace 表 + 待推送事件里。"""
+    """把工具调用过程同时落到 trace 表 + 待推送事件里。
 
-    def on_tool_call(
+    两个回调都是异步的：落库是同步 DB 操作，要走线程池不阻塞事件循环。
+    """
+
+    async def on_tool_call(
         tool_call_id: str,
         tool_name: str,
         arguments: dict[str, Any],
     ):
-        tracer.point(
+        await tracer.point(
             "tool_call",
             tool_name,
             status="started",
@@ -45,7 +48,7 @@ def _tool_callbacks(tracer, step_index: int):
             )
         )
 
-    def on_tool_result(
+    async def on_tool_result(
         tool_call_id: str,
         tool_name: str,
         result: Any,
@@ -57,7 +60,7 @@ def _tool_callbacks(tracer, step_index: int):
         output = {"result": result}
         if error:
             output = {"error": error, "error_type": error_type}
-        tracer.point(
+        await tracer.point(
             "tool_call",
             tool_name,
             status="failed" if error else "completed",
@@ -92,7 +95,7 @@ def _is_tool_error(content: str) -> bool:
     return isinstance(data, dict) and bool(data.get("error"))
 
 
-def _execute_direct_tool(
+async def _execute_direct_tool(
     step: PlanStep,
     index: int,
     context: dict | None,
@@ -108,7 +111,7 @@ def _execute_direct_tool(
         },
     }
     try:
-        content = execute_tool_call(
+        content = await execute_tool_call(
             tool_call,
             context,
             on_tool_call=on_tool_call,
@@ -146,7 +149,7 @@ def _build_step_prompt(step: PlanStep, execution_log: list[str]) -> str:
     return "\n".join(lines)
 
 
-def _execute_with_llm(
+async def _execute_with_llm(
     client,
     model: str,
     step: PlanStep,
@@ -169,14 +172,14 @@ def _execute_with_llm(
         )
     user_message = {"role": "user", "content": prompt}
 
-    with tracer.span(
+    async with tracer.span(
         "llm",
         f"step_{index}_llm",
         step_index=index,
         input_data={"messages": [system_message, user_message]},
     ) as record:
         try:
-            history, content = run_tool_loop(
+            history, content = await run_tool_loop(
                 client,
                 model,
                 [system_message, user_message],
@@ -187,7 +190,7 @@ def _execute_with_llm(
             )
             if content is None:
                 # 工具轮数耗尽等场景，回退到一次不带工具的普通请求
-                fallback = client.chat.completions.create(
+                fallback = await client.chat.completions.create(
                     model=model,
                     messages=history,
                 )
@@ -209,7 +212,7 @@ def _execute_with_llm(
             )
 
 
-def execute_step(
+async def execute_step(
     client,
     model: str,
     step: PlanStep,
@@ -223,10 +226,10 @@ def execute_step(
     if tracer is None:
         tracer = NullTracer()
     if step.tool and step.tool in TOOL_REGISTRY:
-        result = _execute_direct_tool(step, index, context, tracer)
+        result = await _execute_direct_tool(step, index, context, tracer)
         if result.status == "failed" and result.error:
             # 自愈：工具调用失败（通常是参数错误），带着错误信息让 LLM 重试一次
-            return _execute_with_llm(
+            return await _execute_with_llm(
                 client,
                 model,
                 step,
@@ -238,7 +241,7 @@ def execute_step(
                 tool_error=result.error,
             )
         return result
-    return _execute_with_llm(
+    return await _execute_with_llm(
         client,
         model,
         step,

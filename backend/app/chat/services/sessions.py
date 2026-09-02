@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 
 from ...core.cache import delete_chat_context
 from ...core.constants import DEFAULT_SESSION_TITLE
-from core.exceptions import BusinessError
+from ...core.exceptions import BusinessError
 from ..repository import (
     create_session,
     delete_empty_sessions_by_user,

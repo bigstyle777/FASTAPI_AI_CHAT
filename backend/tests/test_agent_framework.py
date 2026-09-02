@@ -4,9 +4,10 @@ r"""agent 框架单元测试（不依赖真实 LLM / 数据库）。
     ..\.venv\Scripts\python.exe tests\test_agent_framework.py
 """
 
+import asyncio
 import json
 import sys
-from contextlib import contextmanager
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -20,6 +21,16 @@ from app.agent.executor import execute_step
 from app.agent.planner import _extract_json, create_plan
 from app.agent.state import AgentState, PlanStep
 from app.chat.schemas import StreamDeltaEvent, StreamUsageEvent
+
+
+def _run(coro):
+    """在一次性事件循环里同步跑完一个协程。"""
+    return asyncio.run(coro)
+
+
+async def _collect(agen):
+    """把异步生成器产出的所有事件收成一个列表。"""
+    return [event async for event in agen]
 
 
 # ---------------------------------------------------------------------------
@@ -86,13 +97,13 @@ class PromptAwareCompletions:
         self.usage = FakeUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
         self.raise_on_response_format = False
 
-    def create(self, **kwargs):
+    async def create(self, **kwargs):
         if self.raise_on_response_format and kwargs.get("response_format"):
             raise RuntimeError("provider 不支持 response_format")
         self.raise_on_response_format = False  # 只失败一次，验证 fallback
 
         if kwargs.get("stream"):
-            return iter(self.final_chunks + [FakeStreamChunk(usage=self.usage)])
+            return self._astream()
 
         messages = kwargs["messages"]
         for message in messages:
@@ -103,6 +114,10 @@ class PromptAwareCompletions:
             if message.get("role") == "system" and "任务总结器" in message["content"]:
                 return FakeResponse("兜底总结")
         return FakeResponse("ok")
+
+    async def _astream(self):
+        for chunk in self.final_chunks + [FakeStreamChunk(usage=self.usage)]:
+            yield chunk
 
 
 def make_client():
@@ -133,17 +148,17 @@ class StubTracer:
         self.points = []
         self.pending = []
 
-    def point(self, stage, name, **kwargs):
+    async def point(self, stage, name, **kwargs):
         self.points.append({"stage": stage, "name": name, **kwargs})
 
-    @contextmanager
-    def span(self, stage, name, **kwargs):
-        self.point(stage, name, status="started", **kwargs)
+    @asynccontextmanager
+    async def span(self, stage, name, **kwargs):
+        await self.point(stage, name, status="started", **kwargs)
         record = StubRecord()
         try:
             yield record
         except Exception as error:
-            self.point(
+            await self.point(
                 stage,
                 name,
                 status="failed",
@@ -152,7 +167,7 @@ class StubTracer:
             )
             raise
         else:
-            self.point(stage, name, status="completed", **kwargs)
+            await self.point(stage, name, status="completed", **kwargs)
 
     def emit(self, event):
         self.pending.append(event)
@@ -192,11 +207,13 @@ def test_create_plan_validates_steps():
         },
         ensure_ascii=False,
     )
-    steps = create_plan(
-        client,
-        "fake-model",
-        [{"role": "user", "content": "任务"}],
-        available_tools=["calculator"],
+    steps = _run(
+        create_plan(
+            client,
+            "fake-model",
+            [{"role": "user", "content": "任务"}],
+            available_tools=["calculator"],
+        )
     )
     assert len(steps) == 3
     assert steps[0].tool == "calculator"
@@ -209,7 +226,7 @@ def test_create_plan_falls_back_without_response_format():
     client = make_client()
     client.chat.completions.raise_on_response_format = True
     client.chat.completions.plan_content = '{"steps": [{"description": "一步"}]}'
-    steps = create_plan(client, "fake-model", [{"role": "user", "content": "任务"}])
+    steps = _run(create_plan(client, "fake-model", [{"role": "user", "content": "任务"}]))
     assert len(steps) == 1
     assert steps[0].description == "一步"
 
@@ -221,12 +238,14 @@ def test_execute_direct_tool_with_trace():
         tool="calculator",
         args={"a": 2, "b": 3, "operation": "multiply"},
     )
-    result = execute_step(
-        None,
-        "fake-model",
-        step,
-        index=0,
-        tracer=tracer,
+    result = _run(
+        execute_step(
+            None,
+            "fake-model",
+            step,
+            index=0,
+            tracer=tracer,
+        )
     )
     assert result.status == "completed"
     assert json.loads(result.output) == 6
@@ -254,12 +273,14 @@ def test_direct_tool_failure_self_heals_via_llm():
         tool="calculator",
         args={"expression": "(15+7)*2"},  # 模型编造的错误参数
     )
-    result = execute_step(
-        client,
-        "fake-model",
-        step,
-        index=0,
-        tracer=tracer,
+    result = _run(
+        execute_step(
+            client,
+            "fake-model",
+            step,
+            index=0,
+            tracer=tracer,
+        )
     )
     # 直接调用失败后，LLM 路径兜底并给出步骤输出
     assert result.status == "completed"
@@ -278,12 +299,14 @@ def test_execute_step_via_llm():
     client = make_client()
     tracer = StubTracer()
     step = PlanStep(description="解释什么是 RAG")
-    result = execute_step(
-        client,
-        "fake-model",
-        step,
-        index=0,
-        tracer=tracer,
+    result = _run(
+        execute_step(
+            client,
+            "fake-model",
+            step,
+            index=0,
+            tracer=tracer,
+        )
     )
     assert result.status == "completed"
     assert result.output == "已完成"
@@ -306,13 +329,15 @@ def test_run_agent_stream_event_sequence():
     )
     tracer = StubTracer(run_id=9)
 
-    events = list(
-        run_agent_stream(
-            client,
-            "fake-model",
-            "帮我算 2+3",
-            messages=[{"role": "user", "content": "帮我算 2+3"}],
-            tracer=tracer,
+    events = _run(
+        _collect(
+            run_agent_stream(
+                client,
+                "fake-model",
+                "帮我算 2+3",
+                messages=[{"role": "user", "content": "帮我算 2+3"}],
+                tracer=tracer,
+            )
         )
     )
 
@@ -352,12 +377,14 @@ def test_run_agent_stream_event_sequence():
 def test_run_agent_non_stream():
     client = make_client()
     client.chat.completions.plan_content = '{"steps": [{"description": "纯回答"}]}'
-    state = run_agent(
-        client,
-        "fake-model",
-        "你好",
-        messages=[{"role": "user", "content": "你好"}],
-        tracer=StubTracer(),
+    state = _run(
+        run_agent(
+            client,
+            "fake-model",
+            "你好",
+            messages=[{"role": "user", "content": "你好"}],
+            tracer=StubTracer(),
+        )
     )
     assert state.status == "completed"
     assert state.final_answer == "你好"
@@ -367,13 +394,15 @@ def test_run_agent_non_stream():
 def test_run_agent_empty_plan_yields_error():
     client = make_client()
     client.chat.completions.plan_content = '{"steps": []}'
-    events = list(
-        run_agent_stream(
-            client,
-            "fake-model",
-            "任务",
-            messages=[{"role": "user", "content": "任务"}],
-            tracer=StubTracer(),
+    events = _run(
+        _collect(
+            run_agent_stream(
+                client,
+                "fake-model",
+                "任务",
+                messages=[{"role": "user", "content": "任务"}],
+                tracer=StubTracer(),
+            )
         )
     )
     assert events[0].type == "error"

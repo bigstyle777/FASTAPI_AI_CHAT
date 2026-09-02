@@ -19,7 +19,7 @@ from ...core.security import (
     token_digest,
     verify_password,
 )
-from core.exceptions import BusinessError
+from ...core.exceptions import BusinessError
 from ..repository import create_user, get_user_by_id, get_user_by_username
 from .captcha import _verify_captcha
 

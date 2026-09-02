@@ -1,6 +1,6 @@
 from ...core.cache import delete_chat_context
 from ...core.constants import BRANCH_TITLE_PREFIX
-from core.exceptions import BusinessError
+from ...core.exceptions import BusinessError
 from ..repository import (
     create_message,
     create_session,

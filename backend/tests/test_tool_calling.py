@@ -10,6 +10,7 @@
     ..\\.venv\\Scripts\\python.exe -m pytest tests\\test_tool_calling.py -v
 """
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -32,6 +33,16 @@ from app.agent.tool_calling import (  # noqa: E402
 from app.chat.schemas import StreamDeltaEvent, StreamUsageEvent  # noqa: E402
 
 
+def _run(coro):
+    """在一次性事件循环里同步跑完一个协程（供非流式测试使用）。"""
+    return asyncio.run(coro)
+
+
+async def _collect(agen):
+    """把异步生成器里的所有事件收成一个列表。"""
+    return [event async for event in agen]
+
+
 def _tool_call(name, arguments, call_id="call_1"):
     return {
         "id": call_id,
@@ -46,24 +57,24 @@ def _tool_call(name, arguments, call_id="call_1"):
 
 
 def test_execute_tool_call_success():
-    result = execute_tool_call(_tool_call("calculator", '{"a": 2, "b": 3, "operation": "add"}'))
+    result = _run(execute_tool_call(_tool_call("calculator", '{"a": 2, "b": 3, "operation": "add"}')))
     assert json.loads(result) == 5
 
 
 def test_execute_tool_call_unknown_tool():
-    result = json.loads(execute_tool_call(_tool_call("nope", "{}")))
+    result = json.loads(_run(execute_tool_call(_tool_call("nope", "{}"))))
     assert result["error_type"] == "ToolNotFound"
     assert "calculator" in result["available_tools"]
 
 
 def test_execute_tool_call_invalid_json_arguments():
-    result = json.loads(execute_tool_call(_tool_call("calculator", "{broken")))
+    result = json.loads(_run(execute_tool_call(_tool_call("calculator", "{broken"))))
     assert result["error_type"] == "InvalidArguments"
 
 
 def test_execute_tool_call_tool_exception_becomes_error_json():
     result = json.loads(
-        execute_tool_call(_tool_call("calculator", '{"a": 1, "b": 0, "operation": "divide"}'))
+        _run(execute_tool_call(_tool_call("calculator", '{"a": 1, "b": 0, "operation": "divide"}')))
     )
     assert result["error_type"] == "ValueError"
     assert result["tool"] == "calculator"
@@ -72,10 +83,19 @@ def test_execute_tool_call_tool_exception_becomes_error_json():
 def test_execute_tool_call_reports_via_callbacks():
     calls = []
     results = []
-    execute_tool_call(
-        _tool_call("calculator", '{"a": 2, "b": 2, "operation": "multiply"}'),
-        on_tool_call=lambda cid, name, args: calls.append((cid, name, args)),
-        on_tool_result=lambda cid, name, res, **kw: results.append((cid, name, res, kw)),
+
+    async def on_tool_call(cid, name, args):
+        calls.append((cid, name, args))
+
+    async def on_tool_result(cid, name, res, **kw):
+        results.append((cid, name, res, kw))
+
+    _run(
+        execute_tool_call(
+            _tool_call("calculator", '{"a": 2, "b": 2, "operation": "multiply"}'),
+            on_tool_call=on_tool_call,
+            on_tool_result=on_tool_result,
+        )
     )
     assert calls == [("call_1", "calculator", {"a": 2, "b": 2, "operation": "multiply"})]
     assert results[0][2] == 4
@@ -91,7 +111,7 @@ def test_call_tool_injects_db_and_user_id():
     def probe(x, db=None, user_id=None):
         return {"x": x, "db": db, "user_id": user_id}
 
-    result = _call_tool(probe, {"x": 1}, {"db": "DB", "user_id": 7, "ignored": True})
+    result = _run(_call_tool(probe, {"x": 1}, {"db": "DB", "user_id": 7, "ignored": True}))
     assert result == {"x": 1, "db": "DB", "user_id": 7}
 
 
@@ -99,7 +119,7 @@ def test_call_tool_without_context_skips_injection():
     def probe(x, db=None):
         return db
 
-    assert _call_tool(probe, {"x": 1}, None) is None
+    assert _run(_call_tool(probe, {"x": 1}, None)) is None
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +134,7 @@ class _ScriptedCompletions:
         self.responses = list(responses)
         self.calls = []
 
-    def create(self, **kwargs):
+    async def create(self, **kwargs):
         self.calls.append(kwargs)
         return self.responses.pop(0)
 
@@ -140,7 +160,7 @@ def test_run_tool_loop_without_tools_returns_untouched(monkeypatch):
         chat=SimpleNamespace(completions=_ScriptedCompletions([]))
     )
     messages = [{"role": "user", "content": "hi"}]
-    history, content = run_tool_loop(client, "m", messages)
+    history, content = _run(run_tool_loop(client, "m", messages))
     assert content is None
     assert history == messages
     assert client.chat.completions.calls == []
@@ -156,7 +176,7 @@ def test_run_tool_loop_executes_tool_then_final_answer(monkeypatch):
     )
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
 
-    history, content = run_tool_loop(client, "m", [{"role": "user", "content": "算 2+3"}])
+    history, content = _run(run_tool_loop(client, "m", [{"role": "user", "content": "算 2+3"}]))
 
     assert content == "答案是 5"
     tool_messages = [m for m in history if isinstance(m, dict) and m.get("role") == "tool"]
@@ -168,6 +188,11 @@ def test_run_tool_loop_executes_tool_then_final_answer(monkeypatch):
 # ---------------------------------------------------------------------------
 # stream_with_tools（流式）
 # ---------------------------------------------------------------------------
+
+
+async def _astream(items):
+    for item in items:
+        yield item
 
 
 def _stream_chunk(content=None, tool_calls=None, usage=None):
@@ -193,11 +218,13 @@ def test_stream_with_tools_aggregates_fragments_and_answers(monkeypatch):
         _stream_chunk(usage=usage),
     ]
 
-    completions = _ScriptedCompletions([iter(round1), iter(round2)])
+    completions = _ScriptedCompletions([_astream(round1), _astream(round2)])
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
 
-    events = list(
-        stream_with_tools(client, "test-model", [{"role": "user", "content": "算 2+3"}])
+    events = _run(
+        _collect(
+            stream_with_tools(client, "test-model", [{"role": "user", "content": "算 2+3"}])
+        )
     )
 
     assert [e.type for e in events] == ["delta", "delta", "usage"]
@@ -215,16 +242,13 @@ def test_stream_with_tools_aggregates_fragments_and_answers(monkeypatch):
 def test_stream_with_tools_plain_answer_without_tool_calls(monkeypatch):
     monkeypatch.setattr(tool_calling, "ALL_TOOLS", [{"type": "function", "function": {"name": "calculator"}}])
     usage = SimpleNamespace(prompt_tokens=1, completion_tokens=1, total_tokens=2)
-    chunks = iter(
-        [
-            _stream_chunk(content="你好"),
-            _stream_chunk(usage=usage),
-        ]
-    )
-    client = SimpleNamespace(chat=SimpleNamespace(completions=_ScriptedCompletions([chunks])))
+    async def chunks():
+        yield _stream_chunk(content="你好")
+        yield _stream_chunk(usage=usage)
+    client = SimpleNamespace(chat=SimpleNamespace(completions=_ScriptedCompletions([chunks()])))
 
-    events = list(
-        stream_with_tools(client, "test-model", [{"role": "user", "content": "hi"}])
+    events = _run(
+        _collect(stream_with_tools(client, "test-model", [{"role": "user", "content": "hi"}]))
     )
 
     assert [e.type for e in events] == ["delta", "usage"]
@@ -234,12 +258,14 @@ def test_stream_with_tools_plain_answer_without_tool_calls(monkeypatch):
 def test_stream_with_tools_without_tools_single_round(monkeypatch):
     monkeypatch.setattr(tool_calling, "ALL_TOOLS", [])
     usage = SimpleNamespace(prompt_tokens=1, completion_tokens=1, total_tokens=2)
-    chunks = iter([_stream_chunk(content="ok"), _stream_chunk(usage=usage)])
-    completions = _ScriptedCompletions([chunks])
+    async def chunks():
+        yield _stream_chunk(content="ok")
+        yield _stream_chunk(usage=usage)
+    completions = _ScriptedCompletions([chunks()])
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
 
-    events = list(
-        stream_with_tools(client, "test-model", [{"role": "user", "content": "hi"}])
+    events = _run(
+        _collect(stream_with_tools(client, "test-model", [{"role": "user", "content": "hi"}]))
     )
 
     assert [e.type for e in events] == ["delta", "usage"]
@@ -294,25 +320,31 @@ def test_assembled_tool_calls_sorted_by_index():
 
 def test_consume_stream_round_returns_aggregated_result():
     usage = SimpleNamespace(prompt_tokens=3, completion_tokens=4, total_tokens=7)
-    chunks = iter(
-        [
-            _stream_chunk(content="你好"),
-            _stream_chunk(
-                tool_calls=[SimpleNamespace(index=0, id="call_1", function=SimpleNamespace(name="calculator", arguments="{}"))]
+
+    class Result:
+        def __init__(self):
+            self.content = ""
+            self.usage = None
+            self.tool_call_parts = {}
+
+    round_result = Result()
+
+    async def feed():
+        generator = _consume_stream_round(
+            _astream(
+                [
+                    _stream_chunk(content="你好"),
+                    _stream_chunk(
+                        tool_calls=[SimpleNamespace(index=0, id="call_1", function=SimpleNamespace(name="calculator", arguments="{}"))]
+                    ),
+                    _stream_chunk(usage=usage),
+                ]
             ),
-            _stream_chunk(usage=usage),
-        ]
-    )
+            round_result,
+        )
+        return [event async for event in generator]
 
-    events = []
-    generator = _consume_stream_round(chunks)
-    while True:
-        try:
-            events.append(next(generator))
-        except StopIteration as stop:
-            round_result = stop.value
-            break
-
+    events = _run(feed())
     assert [e.type for e in events] == ["delta"]
     assert events[0].content == "你好"
     assert round_result.content == "你好"

@@ -1,3 +1,4 @@
+from ...core.blocking import run_blocking
 from ...core.cache import (
     check_rate_limit,
     clear_generation_status,
@@ -6,7 +7,7 @@ from ...core.cache import (
     set_generation_status,
 )
 from ...core.sse import sse_event
-from core.exceptions import BusinessError
+from ...core.exceptions import BusinessError
 from ...task.memory_queue import enqueue_memory_extraction
 from ..repository import (
     delete_message,
@@ -66,20 +67,26 @@ def delete_message_service(db, user, message_id):
     return {"success": True, "message": "删除成功"}
 
 
-def send_message_service(db, user, request):
-    message = _get_validated_message(db, user, request)
-    user_message = persist_user_message(
-        db, user["user_id"], request.session_id, message
+async def send_message_service(db, user, request):
+    message = await run_blocking(_get_validated_message, db, user, request)
+    user_message = await run_blocking(
+        persist_user_message, db, user["user_id"], request.session_id, message
     )
 
-    history = load_visible_messages(db, request.session_id)
+    history = await run_blocking(load_visible_messages, db, request.session_id)
     messages = to_chat_messages(history)
-    ai_reply = chat_with_ai(messages=messages, user_id=user["user_id"], db=db)
-
-    persist_assistant_message(
-        db, request.session_id, ai_reply, parent_id=user_message.id
+    ai_reply = await chat_with_ai(
+        messages=messages, user_id=user["user_id"], db=db
     )
-    enqueue_memory_extraction(user["user_id"], message)
+
+    await run_blocking(
+        persist_assistant_message,
+        db,
+        request.session_id,
+        ai_reply,
+        parent_id=user_message.id,
+    )
+    await run_blocking(enqueue_memory_extraction, user["user_id"], message)
 
     return {"success": True}
 
@@ -110,7 +117,7 @@ def stop_generation_service(session_id, user):
     set_generation_status(session_id, "stop_requested")
 
 
-def stream_ai_reply(
+async def stream_ai_reply(
     db,
     user_id,
     session_id,
@@ -118,24 +125,25 @@ def stream_ai_reply(
     parent_id=None,
     history_messages=None,
 ):
-    clear_generation_status(session_id)
+    await run_blocking(clear_generation_status, session_id)
     ai_reply = ""
     usage = TokenUsage()
 
-    for event in chat_with_ai_stream(messages, user_id=user_id, db=db):
-        if is_stop_requested(session_id):
+    async for event in chat_with_ai_stream(messages, user_id=user_id, db=db):
+        if await run_blocking(is_stop_requested, session_id):
             break
         elif isinstance(event, StreamUsageEvent):
             usage = event.usage
         elif isinstance(event, StreamErrorEvent):
-            clear_generation_status(session_id)
+            await run_blocking(clear_generation_status, session_id)
             yield sse_event(event.type, event)
             return
         elif isinstance(event, StreamDeltaEvent):
             ai_reply += event.content
             yield sse_event(event.type, event)
 
-    persist_assistant_message(
+    await run_blocking(
+        persist_assistant_message,
         db,
         session_id,
         ai_reply,
@@ -147,14 +155,14 @@ def stream_ai_reply(
     )
     saved_messages = history_messages if history_messages is not None else messages
     saved_messages.append({"role": "assistant", "content": ai_reply})
-    save_chat_context(session_id, saved_messages)
+    await run_blocking(save_chat_context, session_id, saved_messages)
 
     user_message_text = _last_user_message_text(messages)
     if user_message_text:
-        enqueue_memory_extraction(user_id, user_message_text)
+        await run_blocking(enqueue_memory_extraction, user_id, user_message_text)
     yield sse_event("usage", StreamUsageEvent(usage=usage))
     yield sse_event("done", StreamDoneEvent())
-    clear_generation_status(session_id)
+    await run_blocking(clear_generation_status, session_id)
 
 
 def _last_user_message_text(messages: list[dict[str, str]]) -> str:
@@ -167,41 +175,44 @@ def _last_user_message_text(messages: list[dict[str, str]]) -> str:
     return ""
 
 
-def modify_message_service(db, user, message_id, new_content):
+async def modify_message_service(db, user, message_id, new_content):
     new_content = new_content.strip()
     if not new_content:
         raise BusinessError("消息不能为空")
 
-    message = get_message_by_id(db, message_id, user["user_id"])
+    message = await run_blocking(get_message_by_id, db, message_id, user["user_id"])
     if not message:
         raise BusinessError("消息不存在")
 
     if message.role != "user":
         raise BusinessError("只能修改用户消息")
 
-    message = update_message(db, message_id, new_content)
+    message = await run_blocking(update_message, db, message_id, new_content)
     assert message is not None
-    delete_messages_after(db, message.session_id, message.id)
-    invalidate_chat_cache(message.session_id)
+    await run_blocking(delete_messages_after, db, message.session_id, message.id)
+    await run_blocking(invalidate_chat_cache, message.session_id)
 
-    history = get_messages_by_session(db, message.session_id)
+    history = await run_blocking(get_messages_by_session, db, message.session_id)
     messages = to_chat_messages(history)
 
-    yield from stream_ai_reply(
+    async for event in stream_ai_reply(
         db,
         user["user_id"],
         message.session_id,
         messages,
         parent_id=message.id,
         history_messages=messages,
-    )
-    return {"success": True, "message": "修改成功"}
+    ):
+        yield event
 
 
-def send_message_stream_service(db, user, request):
+async def send_message_stream_service(db, user, request):
     user_id = user["user_id"]
-    allowed = check_rate_limit(
-        key=f"rate_limit:chat:{user_id}", limit=500, expire_seconds=60 * 60
+    allowed = await run_blocking(
+        check_rate_limit,
+        key=f"rate_limit:chat:{user_id}",
+        limit=500,
+        expire_seconds=60 * 60,
     )
     if not allowed:
         yield sse_event(
@@ -212,23 +223,26 @@ def send_message_stream_service(db, user, request):
 
     try:
         try:
-            message = _get_validated_message(db, user, request)
+            message = await run_blocking(_get_validated_message, db, user, request)
         except BusinessError as error:
             yield sse_event("error", StreamErrorEvent(message=str(error.message)))
             return
 
-        user_message = persist_user_message(db, user_id, request.session_id, message)
+        user_message = await run_blocking(
+            persist_user_message, db, user_id, request.session_id, message
+        )
 
-        messages = load_chat_context(db, request.session_id, message)
+        messages = await run_blocking(load_chat_context, db, request.session_id, message)
 
-        yield from stream_ai_reply(
+        async for event in stream_ai_reply(
             db,
             user_id,
             request.session_id,
             messages,
             parent_id=user_message.id,
             history_messages=messages,
-        )
+        ):
+            yield event
 
     except Exception as error:  # noqa: BLE001
         yield sse_event("error", StreamErrorEvent(message=f"Error: {str(error)}"))
