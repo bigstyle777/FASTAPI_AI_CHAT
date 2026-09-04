@@ -9,11 +9,15 @@ memories.status 列在 Phase 1-3 只建列、写死默认 "active"，没有逻�
 # 默认状态：正常使用中的记忆（models.py 的列默认值也是它）
 ACTIVE = "active"
 
+# Phase 6：被反复访问（reinforce 累计达阈值）的记忆，比普通 ACTIVE
+# 更"热"。检索把它和 ACTIVE 同等对待，生命周期上只是更晚才考虑退化。
+REINFORCED = "REINFORCED"
+
 # Phase 5：已被 consolidate 吸收进更高层总结。
 # 原文不物理删除（可溯源），但不再是独立检索对象。
 CONSOLIDATED = "CONSOLIDATED"
 
-# Phase 6 预留：进入退化观察 / 已归档。只定义不消费，避免 Phase 5
-# 提前写出没人调用的分支。
+# Phase 6：进入退化观察 / 已归档。DECAYING 仍可被检索到（给用户
+# 最后一次机会把它救回来），ARCHIVED 不再进入任何检索。
 DECAYING = "DECAYING"
 ARCHIVED = "ARCHIVED"

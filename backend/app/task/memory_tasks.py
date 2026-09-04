@@ -5,6 +5,7 @@ import logging
 from ..core.celery_worker import celery_app
 from ..core.database import SessionLocal
 from ..memory.consolidator import run_consolidation_for_user
+from ..memory.decay import run_decay
 from ..memory.extractor import extract_memories_for_user
 from ..memory.manager import apply_actions, backfill_missing_embeddings
 
@@ -55,5 +56,24 @@ def consolidate_memories_task(user_id: int):
     except Exception:
         logger.exception("用户 %s 记忆合并后台任务失败", user_id)
         return {"consolidated": 0, "reason": "internal_error"}
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.task.memory_tasks.decay_memories_task")
+def decay_memories_task(user_id: int):
+    """手动触发的生命周期清扫：过期归档 + 冷落降级 + 观察窗归档。
+
+    按用户决定不引入定时调度（无 Beat）：需要定期跑时由运维/上层
+    调度器按需调用入队，而不是 Celery Beat 定时。
+    """
+    db = SessionLocal()
+    try:
+        result = run_decay(db, user_id)
+        logger.info("用户 %s 生命周期清扫完成: %s", user_id, result)
+        return result
+    except Exception:
+        logger.exception("用户 %s 生命周期清扫后台任务失败", user_id)
+        return {"expired_archived": 0, "decayed": 0, "observation_archived": 0}
     finally:
         db.close()

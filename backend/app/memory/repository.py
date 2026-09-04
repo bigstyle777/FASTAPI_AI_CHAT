@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from .models import Memory
 from .schemas import MemoryType
-from .status import ACTIVE, CONSOLIDATED
+from .status import ACTIVE, ARCHIVED, CONSOLIDATED, DECAYING, REINFORCED
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +163,7 @@ def get_by_key(db: Session, user_id: int, key: str) -> Memory | None:
         Memory.user_id == user_id,
         Memory.type == MemoryType.SEMANTIC.value,
         Memory.key == key,
+        Memory.status.notin_((ARCHIVED, CONSOLIDATED)),
     )
     return db.execute(stmt).scalar_one_or_none()
 
@@ -175,10 +176,12 @@ def list_by_key(
     limit: int = 100,
     offset: int = 0,
 ) -> list[Memory]:
-    """按 key 过滤 semantic 记忆。keys 为空时列出该用户全部 semantic。"""
+    """按 key 过滤 semantic 记忆。keys 为空时列出该用户全部可用 semantic。
+    已归档（ARCHIVED）的不再作为"可用记忆"列出。"""
     stmt = select(Memory).where(
         Memory.user_id == user_id,
         Memory.type == MemoryType.SEMANTIC.value,
+        Memory.status.notin_((ARCHIVED, CONSOLIDATED)),
     )
     if keys:
         stmt = stmt.where(Memory.key.in_(keys))
@@ -282,6 +285,7 @@ def vector_search(
         .where(
             Memory.user_id == user_id,
             Memory.embedding.is_not(None),
+            Memory.status.notin_((ARCHIVED, CONSOLIDATED)),
         )
         .order_by(distance.asc())
         .limit(limit)
@@ -307,6 +311,7 @@ def keyword_search_semantic(
     stmt = select(Memory).where(
         Memory.user_id == user_id,
         Memory.type == MemoryType.SEMANTIC.value,
+        Memory.status.notin_((ARCHIVED, CONSOLIDATED)),
     )
 
     lowered = query.strip().lower()
@@ -346,6 +351,7 @@ def list_by_session(
         .where(
             Memory.user_id == user_id,
             Memory.session_id == session_id,
+            Memory.status.notin_((ARCHIVED, CONSOLIDATED)),
         )
         .order_by(Memory.created_at.desc())
         .limit(limit)
@@ -458,3 +464,104 @@ def consolidate_episodes(
     db.commit()
     db.refresh(merged)
     return merged
+
+
+# ---------------------------------------------------------------------------
+# 生命周期选择（Phase 6：Decay / Reinforcement / Archive）
+# ---------------------------------------------------------------------------
+
+
+def list_stale_memories(
+    db: Session,
+    user_id: int,
+    *,
+    older_than: datetime,
+    max_importance: float,
+    limit: int = 1000,
+) -> list[Memory]:
+    """找出"该进退化观察"的记忆：ACTIVE/REINFORCED、importance 不高于
+    阈值、且很久没被访问（anchor = 最近访问时间，没访问过则用创建时间）。
+
+    只挑低重要性的 —— 用户核心目标类的高重要性记忆不该因冷落被降级。
+    按冷落程度升序（最久没用的先处理）。
+    """
+    anchor = func.coalesce(Memory.last_accessed_at, Memory.created_at)
+    stmt = (
+        select(Memory)
+        .where(
+            Memory.user_id == user_id,
+            Memory.status.in_((ACTIVE, REINFORCED)),
+            Memory.importance <= max_importance,
+            anchor < older_than,
+        )
+        .order_by(anchor.asc())
+        .limit(limit)
+    )
+    return list(db.execute(stmt).scalars().all())
+
+
+def list_decaying_memories(
+    db: Session,
+    user_id: int,
+    *,
+    older_than: datetime,
+    limit: int = 1000,
+) -> list[Memory]:
+    """找观察窗已过的 DECAYING 记忆，准备归档。
+
+    进入 DECAYING 时会把 updated_at 记为当时的时刻（见 decay.py），
+    所以这里用 updated_at 判断观察是否到期。
+    """
+    stmt = (
+        select(Memory)
+        .where(
+            Memory.user_id == user_id,
+            Memory.status == DECAYING,
+            Memory.updated_at < older_than,
+        )
+        .order_by(Memory.updated_at.asc())
+        .limit(limit)
+    )
+    return list(db.execute(stmt).scalars().all())
+
+
+def list_expired_memories(
+    db: Session,
+    user_id: int,
+    *,
+    now: datetime,
+    limit: int = 1000,
+) -> list[Memory]:
+    """找已过 expires_at 的记忆。这类不管当前状态如何，直接归档。"""
+    stmt = (
+        select(Memory)
+        .where(
+            Memory.user_id == user_id,
+            Memory.expires_at.is_not(None),
+            Memory.expires_at < now,
+            Memory.status != ARCHIVED,
+        )
+        .order_by(Memory.expires_at.asc())
+        .limit(limit)
+    )
+    return list(db.execute(stmt).scalars().all())
+
+
+def list_memories_to_reinforce(
+    db: Session,
+    user_id: int,
+    memory_ids: list[int],
+) -> list[Memory]:
+    """reinforce 的目标行：只允许操作"还活着"的记忆。
+
+    已归档/已合并的不再参与强化 —— 强化等于"确认这条有用"，
+    对归档记忆做这个动作没有意义。
+    """
+    if not memory_ids:
+        return []
+    stmt = select(Memory).where(
+        Memory.user_id == user_id,
+        Memory.id.in_(memory_ids),
+        Memory.status.notin_((ARCHIVED, CONSOLIDATED)),
+    )
+    return list(db.execute(stmt).scalars().all())

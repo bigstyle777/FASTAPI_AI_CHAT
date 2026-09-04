@@ -130,15 +130,21 @@ CONSOLIDATION_MAX_GROUPS: int = 5
 
 
 # ---------------------------------------------------------------------------
-# 记忆合并（Consolidation，Phase 5）
+# 生命周期（Decay / Reinforcement / Archive，Phase 6）
 # ---------------------------------------------------------------------------
 
-# 只在这个时间窗内找重复事件：太久远的要么已合并过，要么不值得再花
-# 一次 LLM 调用去归纳。
-CONSOLIDATION_WINDOW_DAYS: int = 7
-# 少于这么多条的组不合并 —— 单条事件没有"重复"可言。
-CONSOLIDATION_MIN_GROUP_SIZE: int = 2
-# 两条 episodic 摘要向量的余弦相似度达到这个值，才认为在讲同一类事。
-CONSOLIDATION_SIMILARITY_THRESHOLD: float = 0.78
-# 一次手动合并最多处理几组：每组一次 LLM 调用，限制成本与延迟。
-CONSOLIDATION_MAX_GROUPS: int = 5
+# 一条 ACTIVE/REINFORCED 记忆连续这么多天没被访问、且 importance 低于
+# 阈值，进入退化观察（DECAYING）。
+DECAY_NO_ACCESS_DAYS: int = 90
+# importance 低于该值的 ACTIVE 记忆才可能被标记退化 —— 高重要性记忆
+# （用户核心目标）即使长期没用到也不该自动降级。
+DECAY_IMPORTANCE_THRESHOLD: float = 0.5
+# DECAYING 观察窗（天）：进入退化后再等这么久仍无人访问 → 归档。
+DECAY_OBSERVATION_DAYS: int = 30
+
+# 每次 reinforce（确认被真正用上）：
+#   - access_count +1，last_accessed_at 刷新
+#   - confidence 上调一步（语义：用到了 → 更信这条没记错）
+REINFORCE_CONFIDENCE_STEP: float = 0.05
+# access_count 累计达到该值 → 状态提升为 REINFORCED
+REINFORCE_ACCESS_THRESHOLD: int = 3

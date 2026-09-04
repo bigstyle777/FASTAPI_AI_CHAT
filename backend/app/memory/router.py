@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from ..chat.schemas import ActionResponse
 from ..core.database import get_db
 from ..core.exceptions import BusinessError
-from ..task.memory_queue import enqueue_consolidation
+from ..task.memory_queue import enqueue_consolidation, enqueue_decay
 from ..user.services.auth import get_current_user
 from .repository import (
     create_episodic,
@@ -126,6 +126,17 @@ def trigger_consolidation(user: CurrentUser):
     if not enqueue_consolidation(user["user_id"]):
         raise BusinessError("合并任务提交失败，请确认后台任务服务已启动后重试")
     return {"success": True, "message": "记忆合并任务已提交，完成后可在列表看到结果"}
+
+
+@router.post("/decay", response_model=ActionResponse)
+def trigger_decay(user: CurrentUser):
+    """手动触发一次生命周期清扫（过期归档 / 冷落降级 / 观察窗归档）。
+
+    与合并一样异步执行：本接口只入队，实际清理在 Celery worker 上跑。
+    """
+    if not enqueue_decay(user["user_id"]):
+        raise BusinessError("清理任务提交失败，请确认后台任务服务已启动后重试")
+    return {"success": True, "message": "记忆清理任务已提交，完成后旧的记忆会被归档"}
 
 
 @router.delete("/{memory_id}", response_model=ActionResponse)
