@@ -1,4 +1,4 @@
-"""Memory 系统 Phase 1-3 测试。
+"""Memory 系统 Phase 1-4 测试。
 
 分两块：
 
@@ -6,7 +6,9 @@
    - parse_extraction：JSON 解析、代码块容忍、噪声忽略
    - MemoryAction：字段校验与越界值钳制
    - build_conversation_text：长会话截断
-   - _recency：半衰期指数衰减
+   - recency_score：半衰期指数衰减（reranker 模块）
+   - 权重配置：每类型五因子各自和为 1.0
+   - score_candidate / rerank：五因子加权、exactness 加分、中间明细
    - build_memory_context：按类型分块
 
 2. 数据库测试（依赖 conftest 的测试库）
@@ -35,6 +37,7 @@ from sqlalchemy import select  # noqa: E402
 
 from app.admin.repository import create_role, get_role_by_name  # noqa: E402
 from app.core.config import settings  # noqa: E402
+from app.memory.config import TYPE_WEIGHTS, weights_for  # noqa: E402
 from app.memory.extractor import build_conversation_text, parse_extraction  # noqa: E402
 from app.memory.manager import apply_actions  # noqa: E402
 from app.memory.models import Memory  # noqa: E402
@@ -49,10 +52,14 @@ from app.memory.repository import (  # noqa: E402
     upsert_semantic,
 )
 from app.memory.retriever import (  # noqa: E402
-    SCORE_WEIGHTS,
-    _recency,
     build_memory_context,
     retrieve_memories,
+)
+from app.memory.reranker import (  # noqa: E402
+    Candidate,
+    recency_score,
+    rerank,
+    score_candidate,
 )
 from app.memory.schemas import (  # noqa: E402
     MemoryAction,
@@ -163,53 +170,228 @@ class TestConversationTruncation:
 
 
 class TestRecency:
-    """半衰期衰减：1 个半衰期前 = 0.5，2 个半衰期前 = 0.25。"""
+    """时效性衰减：1 个半衰期前 = 0.5，2 个半衰期前 = 0.25（指数衰减）。"""
+
+    def _make(self, **attrs):
+        m = type("FakeMem", (), {})()
+        for key, value in attrs.items():
+            setattr(m, key, value)
+        return m
 
     def test_half_life_decay(self):
-        class FakeMem:
-            pass
-
-        m = FakeMem()
-        m.last_accessed_at = datetime.utcnow() - timedelta(days=30)
-        score = _recency(m, datetime.utcnow(), 30.0)
+        m = self._make(last_accessed_at=datetime.utcnow() - timedelta(days=30))
+        score = recency_score(m, datetime.utcnow(), half_life_days=30.0)
         assert 0.49 < score < 0.51
 
     def test_two_half_lives(self):
-        class FakeMem:
-            pass
-
-        m = FakeMem()
-        m.last_accessed_at = datetime.utcnow() - timedelta(days=60)
-        score = _recency(m, datetime.utcnow(), 30.0)
+        m = self._make(last_accessed_at=datetime.utcnow() - timedelta(days=60))
+        score = recency_score(m, datetime.utcnow(), half_life_days=30.0)
         assert 0.24 < score < 0.26
 
     def test_fresh(self):
-        class FakeMem:
-            pass
-
-        m = FakeMem()
-        m.last_accessed_at = datetime.utcnow()
-        score = _recency(m, datetime.utcnow(), 30.0)
+        m = self._make(last_accessed_at=datetime.utcnow())
+        score = recency_score(m, datetime.utcnow(), half_life_days=30.0)
         assert 0.99 < score <= 1.0
 
     def test_falls_back_to_created_at_when_no_access(self):
-        class FakeMem:
-            pass
-
-        m = FakeMem()
-        m.last_accessed_at = None
-        m.created_at = datetime.utcnow() - timedelta(days=15)
-        score = _recency(m, datetime.utcnow(), 30.0)
+        m = self._make(
+            last_accessed_at=None,
+            created_at=datetime.utcnow() - timedelta(days=15),
+        )
+        score = recency_score(m, datetime.utcnow(), half_life_days=30.0)
         # 0.5 ** (15/30) ≈ 0.707
         assert 0.7 < score < 0.72
 
+    def test_unknown_decay_name_raises(self):
+        m = self._make(last_accessed_at=datetime.utcnow())
+        with pytest.raises(ValueError, match="未知的时效衰减函数"):
+            recency_score(m, datetime.utcnow(), decay="不存在")
 
-class TestScoreWeights:
-    """排序权重必须集中在一处，且三者之和为 1.0。"""
+    def test_linear_decay_hits_half_at_half_life(self):
+        """线性衰减：age = half_life 时正好 0.5，age = 2*half_life 时降到 0。"""
+        m = self._make(last_accessed_at=datetime.utcnow() - timedelta(days=30))
+        score = recency_score(
+            m, datetime.utcnow(), half_life_days=30.0, decay="linear"
+        )
+        assert 0.49 < score < 0.51
 
-    def test_weights_sum_to_one(self):
-        total = SCORE_WEIGHTS["similarity"] + SCORE_WEIGHTS["importance"] + SCORE_WEIGHTS["recency"]
-        assert abs(total - 1.0) < 1e-6
+        old = self._make(last_accessed_at=datetime.utcnow() - timedelta(days=60))
+        assert recency_score(
+            old, datetime.utcnow(), half_life_days=30.0, decay="linear"
+        ) == 0.0
+
+    def test_flat_decay_stays_one(self):
+        """flat：时效性完全不衰减，新旧记忆 recency 都是 1.0。"""
+        m = self._make(last_accessed_at=datetime.utcnow() - timedelta(days=365))
+        assert recency_score(m, datetime.utcnow(), half_life_days=30.0, decay="flat") == 1.0
+
+
+class TestTypeWeights:
+    """每类型一套五因子权重：和为 1.0，episodic 无精确命中维度。"""
+
+    def test_each_type_sums_to_one(self):
+        for type_, weights in TYPE_WEIGHTS.items():
+            total = sum(weights.values())
+            assert abs(total - 1.0) < 1e-6, (
+                f"{type_} 的权重之和为 {total}，应为 1.0"
+            )
+
+    def test_all_factors_covered(self):
+        from app.memory.config import FACTORS
+
+        for type_, weights in TYPE_WEIGHTS.items():
+            assert set(weights) == set(FACTORS), (
+                f"{type_} 的权重表应恰好覆盖 {FACTORS}，实际是 {sorted(weights)}"
+            )
+
+    def test_semantic_has_exactness_episodic_not(self):
+        assert TYPE_WEIGHTS["semantic"]["exactness"] > 0
+        assert TYPE_WEIGHTS["episodic"]["exactness"] == 0.0
+
+    def test_episodic_recency_weighted_more_than_semantic(self):
+        # episodic 是一次事件，越近越相关；semantic 是稳定事实，时效最不重要
+        assert TYPE_WEIGHTS["episodic"]["recency"] > TYPE_WEIGHTS["semantic"]["recency"]
+
+    def test_weights_for_unknown_type_raises(self):
+        with pytest.raises(ValueError, match="未知记忆类型"):
+            weights_for("不存在的类型")
+
+    def test_weights_for_returns_copy(self):
+        table = weights_for("semantic")
+        table["importance"] = 0.0  # 改副本不应污染全局
+        assert TYPE_WEIGHTS["semantic"]["importance"] > 0
+
+
+class _ScoredFake:
+    """reranker 单测用的假记忆：只需要打分公式读到的几个字段。"""
+
+    def __init__(
+        self,
+        *,
+        type: str = "semantic",
+        importance: float = 0.5,
+        confidence: float = 0.9,
+        age_days: float = 0.0,
+    ):
+        self.type = type
+        self.importance = importance
+        self.confidence = confidence
+        self.created_at = datetime.utcnow() - timedelta(days=age_days)
+        self.last_accessed_at = self.created_at
+
+
+class TestScoreCandidate:
+    """五因子加权公式与中间明细：breakdown[f] = weights[f] * factors[f]。"""
+
+    NOW = datetime.utcnow()
+
+    def test_breakdown_matches_formula(self):
+        mem = _ScoredFake(type="semantic", importance=0.8, confidence=0.9)
+        scored = score_candidate(
+            Candidate(mem, similarity=0.6, source="keyword"), self.NOW
+        )
+        assert scored.type == "semantic"
+        assert scored.factors["similarity"] == 0.6
+        assert scored.factors["importance"] == 0.8
+        assert scored.factors["confidence"] == 0.9
+        assert scored.factors["exactness"] == 0.0  # keyword 不算精确命中
+
+        expected = {
+            factor: scored.weights[factor] * scored.factors[factor]
+            for factor in scored.factors
+        }
+        assert scored.breakdown == expected
+        assert abs(scored.score - sum(expected.values())) < 1e-9
+
+    def test_exact_key_sets_exactness_factor(self):
+        mem = _ScoredFake(type="semantic", importance=0.5)
+        exact = score_candidate(
+            Candidate(mem, similarity=1.0, source="exact_key"), self.NOW
+        )
+        assert exact.factors["exactness"] == 1.0
+        fuzzy = score_candidate(
+            Candidate(mem, similarity=0.95, source="vector"), self.NOW
+        )
+        assert fuzzy.factors["exactness"] == 0.0
+        # 同样的记忆，key 被精确命中必须比模糊语义命中得分更高
+        assert exact.score > fuzzy.score
+
+    def test_exact_key_not_overshadowed_by_fuzzy_semantic(self):
+        """精确命中的正主（哪怕旧、importance 低）不能被模糊向量命中挤下去。
+
+        这是 Phase 4 要守住的边界：用户都打出了完整 key，那条记录必须排前面，
+        而不是被一条"语义上有点接近、但更常见更热门"的记忆盖过。
+        """
+        literal_hit = _ScoredFake(
+            type="semantic", importance=0.4, confidence=0.9, age_days=30
+        )
+        fuzzy_hit = _ScoredFake(
+            type="semantic", importance=0.9, confidence=0.9, age_days=0
+        )
+        results = rerank(
+            [
+                Candidate(fuzzy_hit, similarity=0.95, source="vector"),
+                Candidate(literal_hit, similarity=1.0, source="exact_key"),
+            ],
+            now=self.NOW,
+        )
+        assert results[0].memory is literal_hit, (
+            f"exact key 命中应排第一；实际第一是 fuzzy（"
+            f"{results[0].factors['exactness']=}）"
+        )
+        assert results[0].factors["exactness"] == 1.0
+
+    def test_episodic_exactness_weight_is_zero(self):
+        # episodic 没有 key，exactness 因子恒 0，权重也是 0，任何来源都不加分
+        mem = _ScoredFake(type="episodic", importance=0.5)
+        scored = score_candidate(
+            Candidate(mem, similarity=0.8, source="exact_key"), self.NOW
+        )
+        assert scored.weights["exactness"] == 0.0
+        assert scored.breakdown["exactness"] == 0.0
+
+
+class TestRerank:
+    def test_sorts_desc_and_truncates_top_k(self):
+        low = _ScoredFake(type="semantic", importance=0.2)
+        high = _ScoredFake(type="semantic", importance=0.9)
+        results = rerank(
+            [
+                Candidate(low, similarity=0.3, source="vector"),
+                Candidate(high, similarity=0.3, source="vector"),
+            ],
+            now=datetime.utcnow(),
+            top_k=1,
+        )
+        assert len(results) == 1
+        assert results[0].memory is high
+
+    def test_empty_input_returns_empty(self):
+        assert rerank([], now=datetime.utcnow()) == []
+
+    def test_episodic_old_important_beats_new_trivial_at_same_similarity(self):
+        """episodic 权重下 importance 仍压得过 recency：90 天前高重要 > 刚发生琐碎。
+
+        两条 similarity 相同，recency 只能拉回 (0.25 * (1 - 0.125)) ≈ 0.219，
+        importance 差距有 0.30 * 0.85 = 0.255，旧高重要必须赢。
+        """
+        old_important = _ScoredFake(
+            type="episodic", importance=0.95, confidence=0.95, age_days=90
+        )
+        new_trivial = _ScoredFake(
+            type="episodic", importance=0.1, confidence=0.5, age_days=0
+        )
+
+        results = rerank(
+            [
+                Candidate(new_trivial, similarity=0.5, source="vector"),
+                Candidate(old_important, similarity=0.5, source="vector"),
+            ],
+            now=datetime.utcnow(),
+        )
+        assert results[0].memory is old_important
+        # episodic 权重表确实被采用（exactness 权重为 0）
+        assert results[0].weights["exactness"] == 0.0
 
 
 class TestBuildMemoryContext:

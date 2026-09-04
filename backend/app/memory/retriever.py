@@ -1,73 +1,31 @@
-"""Memory 混合检索：三路取候选 → 合并 → 一次加权排序 → Top K。
+"""Memory 混合检索：三路取候选 → 合并 → reranker 排序 → Top K。
 
-不单独做 Reranking 模块：本阶段排序只需要相似度 / 重要性 / 时效性三个
-因子的线性加权，一个函数就够，拆出独立模块只会多一层没有收益的间接。
-等以后要上交叉编码器重排时再抽。
+本模块只负责"把相关的记忆找出来"（recall），排序（rerank）在
+app/memory/reranker.py —— Phase 4 起打分数与召回逻辑分离：
+- 召回关心的是"并集要全"：向量、字面、同会话三路都跑，谁也别漏；
+- 排序关心的是"Top K 要准"：五因子加权 + 按类型换权重，集中一处好调好测。
+
+本文件里的函数都是纯数据层操作：收 Session、返回 MemoryRead。
 """
 
 import logging
-from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..rag.embedding import embed_query
+from . import config
 from .repository import (
     keyword_search_semantic,
     list_by_session,
     touch_accessed,
     vector_search,
 )
+from .reranker import Candidate, rerank
 from .schemas import MemoryRead, MemoryType
 
 logger = logging.getLogger(__name__)
-
-# 排序权重。三个因子各自的含义：
-#   similarity 这条记忆和当前问题的相关程度
-#   importance 这条记忆本身有多重要（提取时由 LLM 打分）
-#   recency    这条记忆有多"新"（半衰期衰减）
-# 值来自 Settings，可以用环境变量覆盖，调参不用改代码。
-SCORE_WEIGHTS = {
-    "similarity": settings.memory_weight_similarity,
-    "importance": settings.memory_weight_importance,
-    "recency": settings.memory_weight_recency,
-}
-
-# 只有向量检索能算出真实相似度。另外两路拿不到，按"命中强度"给固定值，
-# 强度从高到低：key 被完整命中 > 正文命中关键词 > 只是同一个会话。
-FALLBACK_SIMILARITY = {
-    "exact_key": 1.0,
-    "keyword": 0.6,
-    "session": 0.3,
-}
-
-
-@dataclass
-class _Candidate:
-    """一路检索命中出来的候选，带它自己的相似度来源。"""
-
-    memory: object
-    similarity: float
-    source: str
-
-
-def _recency(memory, now: datetime, half_life_days: float) -> float:
-    """时效性：按半衰期指数衰减，刚用过的是 1.0，一个半衰期前是 0.5。"""
-    anchor = memory.last_accessed_at or memory.created_at
-    if anchor is None:
-        return 0.5
-    age_days = max(0.0, (now - anchor).total_seconds() / 86400.0)
-    return 0.5 ** (age_days / half_life_days)
-
-
-def _score(memory, similarity: float, now: datetime) -> float:
-    recency = _recency(memory, now, settings.memory_recency_half_life_days)
-    return (
-        SCORE_WEIGHTS["similarity"] * similarity
-        + SCORE_WEIGHTS["importance"] * memory.importance
-        + SCORE_WEIGHTS["recency"] * recency
-    )
 
 
 def _gather_candidates(
@@ -76,7 +34,7 @@ def _gather_candidates(
     user_id: int,
     session_id: int | None,
     limit_per_source: int,
-) -> dict[int, _Candidate]:
+) -> dict[int, Candidate]:
     """多路召回取并集，按 memory id 去重（同一条取相似度最高的那次命中）。
 
     检索路径是"并且"，不是"或者"——这是本函数最重要的不变量：
@@ -89,12 +47,12 @@ def _gather_candidates(
     两条路并行取回、合并去重后一起进 reranking，谁也别想替代谁。
     将来任何人想把这里"简化"成单通道，先过这条注释再说。
     """
-    candidates: dict[int, _Candidate] = {}
+    candidates: dict[int, Candidate] = {}
 
     def offer(memory, similarity: float, source: str) -> None:
         existing = candidates.get(memory.id)
         if existing is None or similarity > existing.similarity:
-            candidates[memory.id] = _Candidate(memory, similarity, source)
+            candidates[memory.id] = Candidate(memory, similarity, source)
 
     # 第 1 路：向量检索。semantic + episodic 都在这条路上，
     # 前提是各自 value/summary 有向量（无向量的行被 vector_search 过滤）。
@@ -114,12 +72,12 @@ def _gather_candidates(
     # 无条件执行 —— semantic 不依赖向量，这是它区别于 episodic 的根本。
     for memory, exact in keyword_search_semantic(db, user_id, query, limit_per_source):
         source = "exact_key" if exact else "keyword"
-        offer(memory, FALLBACK_SIMILARITY[source], source)
+        offer(memory, config.FALLBACK_SIMILARITY[source], source)
 
     # 第 3 路：同一会话里产生的记忆
     if session_id is not None:
         for memory in list_by_session(db, user_id, session_id, limit_per_source):
-            offer(memory, FALLBACK_SIMILARITY["session"], "session")
+            offer(memory, config.FALLBACK_SIMILARITY["session"], "session")
 
     return candidates
 
@@ -135,7 +93,7 @@ def retrieve_memories(
 
     top_k 默认取 settings.memory_top_k。三条路径各取 top_k 的若干倍候选，
     合并排序后再截断 —— 每路只取 top_k 的话，某一路的好结果会被另两路
-    挤掉，合并阶段就没得选了。
+    挤掉，合并阶段就没得选了。打分细节见 reranker 模块。
     """
     if top_k is None:
         top_k = settings.memory_top_k
@@ -148,20 +106,13 @@ def retrieve_memories(
     if not candidates:
         return []
 
-    now = datetime.utcnow()
-    scored = [
-        (candidate.memory, _score(candidate.memory, candidate.similarity, now))
-        for candidate in candidates.values()
-    ]
-    scored.sort(key=lambda item: item[1], reverse=True)
-
-    picked = scored[:top_k]
-    touch_accessed(db, [memory.id for memory, _ in picked])
+    ranked = rerank(candidates.values(), top_k=top_k)
+    touch_accessed(db, [item.memory.id for item in ranked])
 
     results: list[MemoryRead] = []
-    for memory, score in picked:
-        read = MemoryRead.model_validate(memory)
-        read.score = round(score, 4)
+    for item in ranked:
+        read = MemoryRead.model_validate(item.memory)
+        read.score = round(item.score, 4)
         results.append(read)
     return results
 

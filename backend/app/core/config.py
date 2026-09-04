@@ -57,17 +57,15 @@ class Settings(BaseSettings):
     rag_chunk_overlap: int = 150
     rag_max_context_chars: int = 5000
     tavily_api_key: str | None = None
-    # ---- Memory System（Phase 1-3 MVP）----
+    # ---- Memory System（Phase 1-6）----
     memory_enabled: bool = True
     # 检索返回的条数上限
     memory_top_k: int = 5
     # 每路候选各取 top_k 的几倍，合并排序后再截断到 top_k
     memory_candidate_multiplier: int = 3
-    # 混合检索排序权重，三者之和应为 1.0（retriever.py 里集中读取）
-    memory_weight_similarity: float = 0.5
-    memory_weight_importance: float = 0.3
-    memory_weight_recency: float = 0.2
-    # 时效性归一化用的半衰期（天）：半衰期前的记忆 recency 记为 0.5
+    # 时效性归一化用的半衰期（天）：半衰期前的记忆 recency 记为 0.5。
+    # 排序权重本身（五因子、按类型分套）已迁到 app/memory/config.py，
+    # 这里只留这一个需要部署期按环境调的标量。
     memory_recency_half_life_days: float = 30.0
     memory_embedding_enabled: bool = True
     # 提取时喂给 LLM 的对话文本上限，避免长会话把 prompt 撑爆

@@ -40,7 +40,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.memory.manager import MemoryManager
 from app.memory.models import Memory
-from app.memory.retriever import _score
+from app.memory.reranker import Candidate, score_candidate
 from app.memory.schemas import MemoryAction, MemoryActionType
 
 
@@ -103,57 +103,75 @@ def _corrupt_embedding(db, user_id: int, key: str) -> None:
 
 
 class _FakeMemory:
-    def __init__(self, importance, age_days, half_life=30.0):
+    def __init__(self, importance, age_days, *, type="episodic", confidence=0.9):
+        self.type = type
         self.importance = importance
+        self.confidence = confidence
         now = datetime.utcnow()
         self.created_at = now - timedelta(days=age_days)
         self.last_accessed_at = self.created_at
-        self._half_life = half_life
 
 
 class TestRankingMath:
-    """场景五/六的算术内核：不连库，直接验证 _score 的相对关系。"""
+    """场景五/六的算术内核：不连库，直接验证五因子打分下的相对关系。
+
+    两个场景里的记忆都是 episodic（一次事件/一个目标），所以走的都是
+    episodic 权重表：similarity 0.35 / importance 0.30 / recency 0.25 /
+    confidence 0.10 / exactness 0（episodic 没有 key）。数值随权重表
+    变动时要同步改这里的边界断言。
+    """
 
     NOW = datetime.utcnow()
 
+    @staticmethod
+    def _score(memory, similarity, now=NOW):
+        return score_candidate(
+            Candidate(memory, similarity=similarity, source="vector"), now
+        ).score
+
     def test_scenario5_importance_outranks_on_similarity_tie(self):
         """相似度打平时，importance 高的必须排前面。"""
-        trivial = _FakeMemory(importance=0.1, age_days=0)
-        decision = _FakeMemory(importance=0.95, age_days=0)
+        trivial = _FakeMemory(importance=0.1, age_days=0, confidence=0.5)
+        decision = _FakeMemory(importance=0.95, age_days=0, confidence=0.95)
 
         for similarity in (0.0, 0.3, 0.6, 0.9):
-            assert _score(decision, similarity, self.NOW) > _score(
-                trivial, similarity, self.NOW
+            assert self._score(decision, similarity) > self._score(
+                trivial, similarity
             ), f"similarity={similarity} 时 importance 加权未生效"
 
     def test_scenario6_old_high_importance_beats_new_trivial(self):
         """90 天前的高重要记忆 vs 刚发生的琐碎记忆：相似度接近时旧的要赢。"""
-        old_goal = _FakeMemory(importance=0.95, age_days=90)
-        new_trivial = _FakeMemory(importance=0.1, age_days=0)
+        old_goal = _FakeMemory(importance=0.95, age_days=90, confidence=0.95)
+        new_trivial = _FakeMemory(importance=0.1, age_days=0, confidence=0.5)
 
         # "相似度接近"用同一档相似度对比；也允许新记忆略高一点
         for similarity in (0.2, 0.3, 0.4, 0.5):
-            assert _score(old_goal, similarity, self.NOW) > _score(
-                new_trivial, similarity, self.NOW
+            assert self._score(old_goal, similarity) > self._score(
+                new_trivial, similarity
             ), f"similarity={similarity} 时 recency 压过了 importance"
 
     def test_recency_boundary_is_documented(self):
         """边界行为要清楚：新记忆只有在相似度明显更高时才该反超。
 
-        半衰期 30 天下，importance 差 (0.95-0.1)*0.3 = 0.255，
-        recency 差 0.2*(1-0.125) = 0.175，旧记忆净优势 ≈ 0.08，
-        折算成相似度是 0.16。也就是说新记忆要高出 0.16 以上的相似度
-        才会反超 —— 这是合理的让步，不是缺陷，但要有人知道这个数。
+        episodic 权重（sim .35 / imp .30 / rec .25 / conf .10）下，
+        90 天前（rec .125）高重要（.95, conf .95）的旧目标 vs 刚发生
+        （rec 1.0）琐碎（.1, conf .5）的新记忆：
+          importance 差 0.30*0.85 = 0.255
+          confidence 差 0.10*0.45 = 0.045
+          recency 差 0.25*(1-0.125) = 0.21875
+          旧记忆净优势 ≈ 0.0813，折算成相似度是 0.0813/0.35 ≈ 0.232。
+        也就是说新记忆要高出 0.232 以上的相似度才会反超 —— 这是合理的
+        让步，不是缺陷，但要有人知道这个数。
         """
-        old_goal = _FakeMemory(importance=0.95, age_days=90)
-        new_trivial = _FakeMemory(importance=0.1, age_days=0)
+        old_goal = _FakeMemory(importance=0.95, age_days=90, confidence=0.95)
+        new_trivial = _FakeMemory(importance=0.1, age_days=0, confidence=0.5)
 
-        # 旧记忆相似度 0，新记忆 0.16 时正好打平；超过就该新记忆赢
-        tie_gap = 0.16
-        old_score = _score(old_goal, 0.0, self.NOW)
-        new_score = _score(new_trivial, tie_gap, self.NOW)
+        # 旧记忆相似度 0，新记忆 0.232 时正好打平；超过就该新记忆赢
+        tie_gap = 0.232
+        old_score = self._score(old_goal, 0.0)
+        new_score = self._score(new_trivial, tie_gap)
         assert abs(old_score - new_score) < 0.01
-        assert _score(new_trivial, tie_gap + 0.05, self.NOW) > old_score
+        assert self._score(new_trivial, tie_gap + 0.05) > old_score
 
 
 # ===========================================================================
@@ -395,7 +413,7 @@ def test_scenario5_importance_outranks_similarity_tie(manager, user_id):
     top = results[0]
     assert "MCP" in top.summary, (
         f"预期 importance 更高的记忆排在首位，实际首位是: {top.summary!r}。"
-        "检查 SCORE_WEIGHTS 里 importance 的权重是否生效，"
+        "检查 reranker 的 episodic 权重表里 importance 的权重是否生效，"
         "或是否退化成了纯相似度排序。"
     )
 
