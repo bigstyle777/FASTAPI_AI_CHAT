@@ -1,6 +1,6 @@
 """calculator MCP Server（stdio 传输）。
 
-由 backend/app/agent/mcp_client.py 在应用启动时通过
+由 backend/app/mcp/manager.py 在应用启动时通过
 StdioServerParameters 拉起，工具名使用 mcp_calculator，
 避免与本地 calculator 工具重名冲突。
 

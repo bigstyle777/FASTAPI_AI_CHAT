@@ -21,6 +21,7 @@ from ..core.cache import (
 )
 from ..core.sse import sse_event
 from ..core.exceptions import BusinessError
+from ..core.stop_signal import StopWatcher, clear_stopped, is_stopped_locally
 from ..task.memory_queue import enqueue_memory_extraction
 from .agent import run_agent_stream
 from .events import AgentDoneEvent, AgentPlanEvent
@@ -31,10 +32,15 @@ from .trace import AgentTracer
 logger = logging.getLogger(__name__)
 
 
-async def _resolve_run_status(failed: bool, session_id: int) -> str:
+def _resolve_run_status(failed: bool, session_id: int) -> str:
+    """收尾时判断这一轮算"完成"还是"被停止"。
+
+    只看进程内标记就够了：真被停掉的话，流式循环里早就标上了；
+    没必要为了这个判断再查一次 Redis。
+    """
     if failed:
         return "failed"
-    if await run_blocking(is_stop_requested, session_id):
+    if is_stopped_locally(session_id):
         return "stopped"
     return "completed"
 
@@ -81,7 +87,7 @@ class _RunOutcome:
 
 async def agent_stream_service(
     db: Session, user: dict, request
-) -> AsyncGenerator[str, None, None]:
+) -> AsyncGenerator[str, None]:
     """POST /agent/stream 的 SSE 生成器。"""
     user_id = user["user_id"]
     session_id = request.session_id
@@ -97,6 +103,11 @@ async def agent_stream_service(
         return
 
     await run_blocking(clear_generation_status, session_id)
+    # 清掉上一轮可能残留的标记，避免它一直堵着这个会话
+    clear_stopped(session_id)
+    stop_watcher = StopWatcher(
+        session_id, lambda: run_blocking(is_stop_requested, session_id)
+    )
     run = None
     tracer = None
 
@@ -139,14 +150,14 @@ async def agent_stream_service(
             messages=messages,
             context=context,
             tracer=tracer,
-            should_stop=lambda: run_blocking(is_stop_requested, session_id),
+            should_stop=stop_watcher.should_stop,
         ):
             outcome.record(event)
             if isinstance(event, AgentState):
                 continue
             yield sse_event(event.type, event)
 
-        status = await _resolve_run_status(outcome.failed, session_id)
+        status = _resolve_run_status(outcome.failed, session_id)
         await run_blocking(
             update_agent_run,
             db,
@@ -177,9 +188,11 @@ async def agent_stream_service(
 
         yield sse_event("done", AgentDoneEvent(run_id=run.id, status=status))
         await run_blocking(clear_generation_status, session_id)
+        clear_stopped(session_id)
 
     except Exception as error:
         logger.exception("Agent 运行失败")
+        clear_stopped(session_id)
         if tracer is not None and run is not None:
             await tracer.point(
                 "error",

@@ -1,4 +1,5 @@
 from ...core.cache import get_chat_context, set_chat_context
+from ...core.config import settings
 from ...memory.services.memory import build_memory_context
 from ...rag.prompts import build_context_message
 from ...rag.retriever import retrieve_relevant_chunks
@@ -60,6 +61,52 @@ def to_chat_messages(messages) -> list[dict[str, str]]:
     return [{"role": item.role, "content": item.content} for item in messages]
 
 
+def trim_chat_messages(messages: list[dict]) -> list[dict]:
+    """把喂给模型的历史砍到预算内：从最新往回挑，条数或字数用尽就停。
+
+    为什么要砍
+    ----------
+    历史每多一条，模型生成前要"读"的内容就多一截，首字延迟随之变长，
+    而且是随会话长度线性恶化——聊到第 200 条时，光把这个会话重读一遍
+    就要好几秒。缓存路径原本只存最近 20 条（见 save_chat_context），
+    但缓存过期后回源数据库时是**全量**加载，两条路径行为不一致。
+
+    为什么两个上限都要
+    ------------------
+    只看条数：20 条可能是 20 句闲聊，也可能是 20 段几千字的长文。
+    只看字数：一条超长消息就会把预算吃光。所以先看条数、再看字数。
+
+    注意：最新的那条永远保留（哪怕它自己就超预算），否则用户刚问的
+    问题会被丢掉，模型收到的上下文就断了。
+    """
+    picked: list[dict] = []
+    total_chars = 0
+
+    for message in reversed(messages):
+        if len(picked) >= settings.chat_context_max_messages:
+            break
+
+        length = len(message.get("content") or "")
+        # picked 非空才检查字数，保证第一条（最新的）一定被选中
+        if picked and total_chars + length > settings.chat_context_max_chars:
+            break
+
+        picked.append(message)
+        total_chars += length
+
+    picked.reverse()
+    return picked
+
+
+def load_model_context(db, session_id: int) -> list[dict[str, str]]:
+    """取喂给模型用的历史：完整可见历史 + 截断到预算内。
+
+    只给模型用。前端展示历史（get_messages_service）和创建分支
+    （branch.py）要的是全量，别用这个。
+    """
+    return trim_chat_messages(to_chat_messages(load_visible_messages(db, session_id)))
+
+
 def _load_message_chain(db, message_id: int):
     ancestry = get_message_ancestry(db, message_id)
     if len(ancestry) > 1:
@@ -103,8 +150,10 @@ def load_chat_context(db, session_id: int, user_message: str) -> list[dict[str, 
         messages.append({"role": "user", "content": user_message})
         return messages
 
-    return to_chat_messages(load_visible_messages(db, session_id))
+    return load_model_context(db, session_id)
 
 
 def save_chat_context(session_id: int, messages: list[dict[str, str]]) -> None:
-    set_chat_context(session_id, messages[-20:])
+    # 存进缓存的就是下一轮的上下文，按同一套规则截断，
+    # 这样"缓存命中"和"缓存过期回源数据库"两条路径拿到的长度一致
+    set_chat_context(session_id, trim_chat_messages(messages))

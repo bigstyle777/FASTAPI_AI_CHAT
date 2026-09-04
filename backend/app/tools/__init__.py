@@ -29,3 +29,15 @@ TOOL_REGISTRY: dict[str, Callable] = {}
 for _module in _TOOL_MODULES:
     ALL_TOOLS.extend(_module.TOOLS)
     TOOL_REGISTRY.update(_module.TOOL_REGISTRY)
+
+
+async def register_dynamic_tools() -> list[str]:
+    """应用启动期（lifespan）调用：把 MCP 工具合并进 ALL_TOOLS / TOOL_REGISTRY。
+
+    不放在模块顶层执行，是因为 MCP 连接要在 lifespan 的异步上下文里建立
+    （Client 上下文的进入/退出必须在同一个任务里）；延迟 import 也让本模块
+    对 mcp 保持零耦合（mcp_adapter 才是唯一衔接点）。返回成功注册的工具名列表。
+    """
+    from .mcp_adapter import register_mcp_tools
+
+    return await register_mcp_tools(ALL_TOOLS, TOOL_REGISTRY)

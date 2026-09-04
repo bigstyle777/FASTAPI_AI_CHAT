@@ -14,8 +14,8 @@ Tool Calling 主循环（异步）
 
 工具本身有两种，主循环对它们一视同仁：
 
-- MCP 工具（``MCPTool``）：``__call__`` 是 async 的，直接 await。
-  它内部会把调用交给 MCP 后台事件循环再接回来，等待期间同样不占线程；
+- MCP 工具（async 可调用对象）：``__call__`` 是 async 的，直接 await，
+  由 mcp 包的路由分发到对应 server，等待期间同样不占线程；
 - 本地工具（calculator / rag_search / web_search ...）：同步函数，
   内部会查库或发 HTTP，统一丢线程池，避免阻塞事件循环。
 
@@ -43,8 +43,8 @@ MAX_TOOL_TURNS = 5
 def _is_async_tool(func: Callable[..., Any]) -> bool:
     """调用这个工具会返回协程吗？
 
-    ``MCPTool`` 这种"拿实例当函数用"的对象，async 的是它的 ``__call__``，
-    而 ``inspect.iscoroutinefunction(实例)`` 会返回 False，所以要往下看一层。
+    MCP 工具这种"拿闭包/实例当函数用"的对象，async 的是它的 ``__call__``，
+    而 ``inspect.iscoroutinefunction(闭包)`` 会返回 False，所以要往下看一层。
 
     必须在真正调用**之前**判断：同步工具一旦调用就已经把线程占住了，
     事后再检查返回值来不来得及都没用。

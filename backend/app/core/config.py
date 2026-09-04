@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     user_settings_cache_ttl_seconds: int = 3600
     database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/aichat"
     chat_ttl_seconds: int = 60 * 60
+    # 喂给模型的历史条数上限。历史越长，模型要"读"的内容越多，首字延迟越久。
+    chat_context_max_messages: int = 20
+    # 喂给模型的历史字符预算。只限条数不够：20 条可能是 20 句闲聊，
+    # 也可能是 20 段长文，后者照样把 prompt 撑爆，所以再压一道字符上限。
+    chat_context_max_chars: int = 12000
     stop_generation_ttl_seconds: int = 60 * 5
     bootstrap_admin_username: str | None = "admin"
     bootstrap_admin_password: str | None = "admin123456"
@@ -52,6 +57,24 @@ class Settings(BaseSettings):
     rag_chunk_overlap: int = 150
     rag_max_context_chars: int = 5000
     tavily_api_key: str | None = None
+    # ---- Memory System（Phase 1-3 MVP）----
+    memory_enabled: bool = True
+    # 检索返回的条数上限
+    memory_top_k: int = 5
+    # 每路候选各取 top_k 的几倍，合并排序后再截断到 top_k
+    memory_candidate_multiplier: int = 3
+    # 混合检索排序权重，三者之和应为 1.0（retriever.py 里集中读取）
+    memory_weight_similarity: float = 0.5
+    memory_weight_importance: float = 0.3
+    memory_weight_recency: float = 0.2
+    # 时效性归一化用的半衰期（天）：半衰期前的记忆 recency 记为 0.5
+    memory_recency_half_life_days: float = 30.0
+    memory_embedding_enabled: bool = True
+    # 提取时喂给 LLM 的对话文本上限，避免长会话把 prompt 撑爆
+    memory_extraction_max_chars: int = 4000
+    # MCP server 列表（JSON 数组字符串，格式见 app/mcp/config.py；
+    # None 时使用默认的 calculator server）
+    mcp_servers: str | None = None
     log_level: str = "INFO"
 
     @model_validator(mode="after")

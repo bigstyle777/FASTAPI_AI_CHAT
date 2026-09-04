@@ -8,6 +8,7 @@ from ...core.cache import (
 )
 from ...core.sse import sse_event
 from ...core.exceptions import BusinessError
+from ...core.stop_signal import StopWatcher, clear_stopped, mark_stopped
 from ...task.memory_queue import enqueue_memory_extraction
 from ..repository import (
     delete_message,
@@ -29,9 +30,11 @@ from ..schemas import (
 from .llm import chat_with_ai, chat_with_ai_stream
 from .message_context import (
     load_chat_context,
+    load_model_context,
     load_visible_messages,
     save_chat_context,
     to_chat_messages,
+    trim_chat_messages,
 )
 from .message_persistence import persist_assistant_message, persist_user_message
 
@@ -73,8 +76,8 @@ async def send_message_service(db, user, request):
         persist_user_message, db, user["user_id"], request.session_id, message
     )
 
-    history = await run_blocking(load_visible_messages, db, request.session_id)
-    messages = to_chat_messages(history)
+    # 非流式接口同样走"喂模型"的上下文，别把整个会话历史塞进去
+    messages = await run_blocking(load_model_context, db, request.session_id)
     ai_reply = await chat_with_ai(
         messages=messages, user_id=user["user_id"], db=db
     )
@@ -114,6 +117,8 @@ def get_messages_service(db, user, session_id):
 
 
 def stop_generation_service(session_id, user):
+    # 进程内先记一笔，流式循环下一次检查就能立刻看到，不用等 Redis 兜底
+    mark_stopped(session_id)
     set_generation_status(session_id, "stop_requested")
 
 
@@ -126,16 +131,22 @@ async def stream_ai_reply(
     history_messages=None,
 ):
     await run_blocking(clear_generation_status, session_id)
+    # 清掉上一轮可能残留的标记，避免它一直堵着这个会话
+    clear_stopped(session_id)
+    stop_watcher = StopWatcher(
+        session_id, lambda: run_blocking(is_stop_requested, session_id)
+    )
     ai_reply = ""
     usage = TokenUsage()
 
     async for event in chat_with_ai_stream(messages, user_id=user_id, db=db):
-        if await run_blocking(is_stop_requested, session_id):
+        if await stop_watcher.should_stop():
             break
         elif isinstance(event, StreamUsageEvent):
             usage = event.usage
         elif isinstance(event, StreamErrorEvent):
             await run_blocking(clear_generation_status, session_id)
+            clear_stopped(session_id)
             yield sse_event(event.type, event)
             return
         elif isinstance(event, StreamDeltaEvent):
@@ -163,6 +174,7 @@ async def stream_ai_reply(
     yield sse_event("usage", StreamUsageEvent(usage=usage))
     yield sse_event("done", StreamDoneEvent())
     await run_blocking(clear_generation_status, session_id)
+    clear_stopped(session_id)
 
 
 def _last_user_message_text(messages: list[dict[str, str]]) -> str:
@@ -193,7 +205,7 @@ async def modify_message_service(db, user, message_id, new_content):
     await run_blocking(invalidate_chat_cache, message.session_id)
 
     history = await run_blocking(get_messages_by_session, db, message.session_id)
-    messages = to_chat_messages(history)
+    messages = trim_chat_messages(to_chat_messages(history))
 
     async for event in stream_ai_reply(
         db,
