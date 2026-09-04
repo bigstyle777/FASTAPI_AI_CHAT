@@ -10,6 +10,7 @@ from ..repository import (
     get_messages_up_to,
     get_session_by_id,
 )
+from ...memory.decay import reinforce_memories
 from ...memory.retriever import build_memory_context, retrieve_memories
 
 
@@ -25,6 +26,11 @@ def build_memory_messages(
     关键是这些消息**不要**写进 ``save_chat_context`` 的缓存里。
     下次会话可能用相同的 query 重新检索，最新一轮的记忆才能体现；
     把记忆烤进缓存会让它"凝固"，越攒越旧。
+
+    reinforce 触点在"记忆真的被拼进消息、即将喂给模型"这一刻：
+    检索命中只是"被看到"（刷新 last_accessed_at），拼进 prompt 才是
+    "被用上"，才累加 access_count / 上调 confidence —— 这正是
+    agent 运行时与记忆生命周期的唯一衔接点。
     """
     if not settings.memory_enabled:
         return []
@@ -32,6 +38,8 @@ def build_memory_messages(
     text = build_memory_context(memories)
     if not text:
         return []
+    # 即将进入模型上下文 → 确认这批记忆被用上了
+    reinforce_memories(db, user_id, [memory.id for memory in memories])
     return [{
         "role": "system",
         "content": (

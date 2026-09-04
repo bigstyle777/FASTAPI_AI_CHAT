@@ -148,3 +148,13 @@ DECAY_OBSERVATION_DAYS: int = 30
 REINFORCE_CONFIDENCE_STEP: float = 0.05
 # access_count 累计达到该值 → 状态提升为 REINFORCED
 REINFORCE_ACCESS_THRESHOLD: int = 3
+
+
+# ---------------------------------------------------------------------------
+# 注入上下文预算（Phase 7）
+# ---------------------------------------------------------------------------
+
+# 检索到的记忆拼成 system 消息时允许的最大字符数。记忆只是"参考背景"，
+# 不能反客为主把对话历史和工具结果挤掉 —— 超预算时按排序从低分往
+# 高分砍，保住最相关的几条。
+MEMORY_CONTEXT_MAX_CHARS: int = 2000

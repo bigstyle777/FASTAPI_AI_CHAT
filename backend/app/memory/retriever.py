@@ -117,33 +117,84 @@ def retrieve_memories(
     return results
 
 
-def build_memory_context(memories: list[MemoryRead]) -> str:
+_BUCKET_HEADERS = {
+    "semantic": "关于用户：",
+    "episodic": "过去发生的事：",
+}
+
+
+def _memory_line(memory) -> tuple[str, str] | None:
+    """把一条记忆变成 (所属桶, 行文本)；内容为空返回 None。"""
+    text = memory.content.strip()
+    if not text:
+        return None
+    if memory.type == MemoryType.SEMANTIC:
+        label = f"{memory.key}：" if memory.key else ""
+        return "semantic", f"- {label}{text}"
+    label = f"[{memory.event_type}] " if memory.event_type else ""
+    return "episodic", f"- {label}{text}"
+
+
+def build_memory_context(
+    memories: list[MemoryRead],
+    *,
+    max_chars: int | None = None,
+) -> str:
     """把检索到的记忆拼成一段可以塞进 system prompt 的文本。
 
     按类型分开写：semantic 是"关于用户的事实"，episodic 是"发生过的事"，
     混在一起模型容易分不清哪些是稳定偏好、哪些只是一次性的决策。
+
+    max_chars 是注入预算（默认 config.MEMORY_CONTEXT_MAX_CHARS）：
+    记忆只是参考背景，不能反客为主把对话历史挤掉。超预算时按传入顺序
+    （检索层已按分数降序）从低分往高分砍，保证最相关的几条始终在。
+    极端情况（单条就超预算）也至少保留最高分那条，避免注入为空。
     """
     if not memories:
         return ""
 
-    semantic_lines: list[str] = []
-    episodic_lines: list[str] = []
+    budget = (
+        config.MEMORY_CONTEXT_MAX_CHARS if max_chars is None else max_chars
+    )
+    if budget <= 0:
+        return ""
+
+    lines: dict[str, list[str]] = {"semantic": [], "episodic": []}
+    used_chars = 0
+    fallback: tuple[str, str] | None = None  # 预算内放不下任何一条时兜底
 
     for memory in memories:
-        text = memory.content.strip()
-        if not text:
+        entry = _memory_line(memory)
+        if entry is None:
             continue
-        if memory.type == MemoryType.SEMANTIC:
-            label = f"{memory.key}：" if memory.key else ""
-            semantic_lines.append(f"- {label}{text}")
-        else:
-            label = f"[{memory.event_type}] " if memory.event_type else ""
-            episodic_lines.append(f"- {label}{text}")
+        if fallback is None:
+            fallback = entry
+
+        bucket, line = entry
+        # 成本 = 行文本 + 换行；该桶第一条还要付段头；第二个桶出现时
+        # 段与段之间多一个空行
+        cost = len(line) + 1
+        if not lines[bucket]:
+            cost += len(_BUCKET_HEADERS[bucket]) + 1
+            if any(lines.values()) and used_chars > 0:
+                cost += 1  # 段间空行
+        if used_chars + cost > budget:
+            continue  # 分数更低的直接砍掉
+        lines[bucket].append(line)
+        used_chars += cost
+
+    if not lines["semantic"] and not lines["episodic"] and fallback is not None:
+        # 预算太小连一条都放不下：保住最高分那条，宁超不空
+        bucket, line = fallback
+        lines[bucket].append(line)
 
     blocks: list[str] = []
-    if semantic_lines:
-        blocks.append("关于用户：\n" + "\n".join(semantic_lines))
-    if episodic_lines:
-        blocks.append("过去发生的事：\n" + "\n".join(episodic_lines))
-
+    if lines["semantic"]:
+        blocks.append(
+            _BUCKET_HEADERS["semantic"] + "\n" + "\n".join(lines["semantic"])
+        )
+    if lines["episodic"]:
+        blocks.append(
+            _BUCKET_HEADERS["episodic"] + "\n" + "\n".join(lines["episodic"])
+        )
     return "\n\n".join(blocks)

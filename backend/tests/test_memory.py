@@ -417,6 +417,54 @@ class TestBuildMemoryContext:
     def test_empty_returns_empty_string(self):
         assert build_memory_context([]) == ""
 
+    def test_max_chars_keeps_top_ranked_only(self):
+        """注入预算：超限时从低分往高分砍，但至少保住最高分那条。"""
+        memories = [
+            MemoryRead(
+                id=1, user_id=1, type=MemoryType.SEMANTIC,
+                key="top_fact", value="x" * 200,
+                importance=0.9, confidence=0.9,
+            ),
+            MemoryRead(
+                id=2, user_id=1, type=MemoryType.SEMANTIC,
+                key="mid_fact", value="x" * 200,
+                importance=0.5, confidence=0.9,
+            ),
+            MemoryRead(
+                id=3, user_id=1, type=MemoryType.SEMANTIC,
+                key="bottom_fact", value="x" * 200,
+                importance=0.1, confidence=0.9,
+            ),
+        ]
+        # 预算小到单条都放不下：fallback 保住最高分那条
+        text = build_memory_context(memories, max_chars=80)
+        assert "top_fact" in text
+        assert "mid_fact" not in text
+        assert "bottom_fact" not in text
+
+    def test_max_chars_drops_lowest_when_partially_fits(self):
+        memories = [
+            MemoryRead(
+                id=1, user_id=1, type=MemoryType.SEMANTIC,
+                key="a", value="v" * 40,
+                importance=0.9, confidence=0.9,
+            ),
+            MemoryRead(
+                id=2, user_id=1, type=MemoryType.SEMANTIC,
+                key="b", value="v" * 40,
+                importance=0.8, confidence=0.9,
+            ),
+            MemoryRead(
+                id=3, user_id=1, type=MemoryType.SEMANTIC,
+                key="c", value="v" * 40,
+                importance=0.1, confidence=0.9,
+            ),
+        ]
+        # 预算只够前两条（各约 45+ 字符）：第三条（最低分）被砍
+        text = build_memory_context(memories, max_chars=120)
+        assert "- a：" in text and "- b：" in text
+        assert "- c：" not in text
+
 
 # ===========================================================================
 # 数据库测试 —— 依赖 conftest 的测试库 + fake embedding

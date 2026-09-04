@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from ..core.blocking import run_blocking
 from ..core.config import settings
 from ..rag.embedding import embed_texts
+from .decay import reinforce_memories as repo_reinforce_memories
 from .extractor import extract_memories_for_user
 from .repository import (
     create_episodic,
@@ -160,3 +161,17 @@ class MemoryManager:
         """
         memory = await run_blocking(repo_get_by_key, self.db, self.user_id, key)
         return MemoryRead.model_validate(memory) if memory is not None else None
+
+    async def reinforce(self, memory_ids: list[int]) -> int:
+        """确认一批记忆被真正用上（agent 契约的 reinforce）。
+
+        "被看到"（检索命中）只刷新 last_accessed_at；"被用上"
+        （agent 把这条记忆写进回答）才调这里 —— memory 侧累加
+        access_count、上调 confidence、把退化观察中的记忆拉回。
+        """
+        return await run_blocking(
+            repo_reinforce_memories,
+            self.db,
+            self.user_id,
+            memory_ids,
+        )
