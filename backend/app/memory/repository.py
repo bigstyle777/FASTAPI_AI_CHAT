@@ -151,6 +151,40 @@ def get_by_id(db: Session, memory_id: int, user_id: int) -> Memory | None:
     return db.execute(stmt).scalar_one_or_none()
 
 
+def get_by_key(db: Session, user_id: int, key: str) -> Memory | None:
+    """semantic 精确访问：按 (user_id, key) 取一条，不依赖 embedding。
+
+    这是与 retrieve()（语义检索）完全独立的一条路径 —— 检索走的是
+    "召回+排序"的不确定过程，而这里回答"这个 key 到底记了什么"是
+    确定的。任何时候都不要把它们合并成一套逻辑。
+    """
+    stmt = select(Memory).where(
+        Memory.user_id == user_id,
+        Memory.type == MemoryType.SEMANTIC.value,
+        Memory.key == key,
+    )
+    return db.execute(stmt).scalar_one_or_none()
+
+
+def list_by_key(
+    db: Session,
+    user_id: int,
+    keys: list[str] | None = None,
+    *,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[Memory]:
+    """按 key 过滤 semantic 记忆。keys 为空时列出该用户全部 semantic。"""
+    stmt = select(Memory).where(
+        Memory.user_id == user_id,
+        Memory.type == MemoryType.SEMANTIC.value,
+    )
+    if keys:
+        stmt = stmt.where(Memory.key.in_(keys))
+    stmt = stmt.order_by(Memory.key.asc()).limit(limit).offset(offset)
+    return list(db.execute(stmt).scalars().all())
+
+
 def list_by_user(
     db: Session,
     user_id: int,

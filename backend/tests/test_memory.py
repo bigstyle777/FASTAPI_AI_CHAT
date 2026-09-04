@@ -42,6 +42,8 @@ from app.memory.repository import (  # noqa: E402
     create_episodic,
     delete_memory,
     get_by_id,
+    get_by_key,
+    list_by_key,
     list_by_user,
     update_content,
     upsert_semantic,
@@ -275,6 +277,47 @@ class TestUpsertSemantic:
 
     def test_unknown_user_returns_nothing(self, db):
         assert get_by_id(db, 99999, 1) is None
+
+
+class TestGetByKey:
+    """精确访问：不依赖 embedding，任何状态下都应该命中。"""
+
+    def test_get_by_key_returns_exact_fact(self, db):
+        user_id = _make_user(db, "getkey")
+        upsert_semantic(db, user_id, "backend_framework", "FastAPI")
+
+        memory = get_by_key(db, user_id, "backend_framework")
+        assert memory is not None
+        assert memory.value == "FastAPI"
+
+    def test_get_by_key_missing_returns_none(self, db):
+        user_id = _make_user(db, "getkey-miss")
+        assert get_by_key(db, user_id, "不存在的 key") is None
+
+    def test_get_by_key_scoped_to_user(self, db):
+        user_a = _make_user(db, "getkey-a")
+        user_b = _make_user(db, "getkey-b")
+        upsert_semantic(db, user_a, "shared_key", "A 的值")
+        assert get_by_key(db, user_b, "shared_key") is None
+
+    def test_get_by_key_does_not_return_episodic(self, db):
+        """episodic 没有 key，精确访问只面向 semantic。"""
+        user_id = _make_user(db, "getkey-epi")
+        create_episodic(db, user_id, "一次会议决定", event_type="decision")
+        assert get_by_key(db, user_id, "一次会议决定") is None
+
+    def test_list_by_key_filters_and_orders(self, db):
+        user_id = _make_user(db, "listkey")
+        upsert_semantic(db, user_id, "b_key", "2")
+        upsert_semantic(db, user_id, "a_key", "1")
+        upsert_semantic(db, user_id, "c_key", "3")
+        create_episodic(db, user_id, "事件不该出现在 semantic 列表里")
+
+        rows = list_by_key(db, user_id)
+        assert [r.key for r in rows] == ["a_key", "b_key", "c_key"]
+
+        filtered = list_by_key(db, user_id, keys=["a_key", "c_key"])
+        assert [r.key for r in filtered] == ["a_key", "c_key"]
 
 
 class TestCreateEpisodic:

@@ -22,6 +22,7 @@ from ..rag.embedding import embed_texts
 from .extractor import extract_memories_for_user
 from .repository import (
     create_episodic,
+    get_by_key as repo_get_by_key,
     list_missing_embedding,
     set_embedding,
     upsert_semantic,
@@ -149,3 +150,13 @@ class MemoryManager:
             top_k,
             self.session_id,
         )
+
+    async def get_by_key(self, key: str) -> MemoryRead | None:
+        """精确访问：按 (user_id, key) 取一条 semantic 记忆。
+
+        与 retrieve 完全独立 —— 不经过向量/关键词召回，回答
+        "这个 key 到底记了什么"是确定的。语义检索（召回+排序）和
+        精确访问（确定性查找）是两条路径，永不合并。
+        """
+        memory = await run_blocking(repo_get_by_key, self.db, self.user_id, key)
+        return MemoryRead.model_validate(memory) if memory is not None else None
