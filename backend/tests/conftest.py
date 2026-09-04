@@ -36,6 +36,14 @@ TEST_DATABASE_URL = os.getenv(
     "TEST_DATABASE_URL",
     "postgresql+psycopg://postgres:postgres@localhost:5432/aichat_test",
 )
+
+
+def pytest_configure(config):
+    """注册自定义标记，避免 PytestUnknownMarkWarning。"""
+    config.addinivalue_line(
+        "markers",
+        "llm: 真实调用 LLM 的验收测试，慢且非确定，本地单独跑（pytest -m llm）",
+    )
 # 管理连接（建库用）：从 TEST_DATABASE_URL 派生，仅替换库名，
 # 本地（.env 密码）与 CI（默认密码）共用同一套环境变量
 ADMIN_DATABASE_URL = TEST_DATABASE_URL.rsplit("/", 1)[0] + "/postgres"

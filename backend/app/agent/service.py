@@ -7,7 +7,10 @@ from sqlalchemy.orm import Session
 
 from ..chat.repository import get_session_by_user
 from ..chat.schemas import StreamErrorEvent, StreamUsageEvent, TokenUsage
-from ..chat.services.message_context import load_chat_context
+from ..chat.services.message_context import (
+    build_memory_messages,
+    load_chat_context,
+)
 from ..chat.services.message_persistence import (
     persist_assistant_message,
     persist_user_message,
@@ -123,7 +126,16 @@ async def agent_stream_service(
             persist_user_message, db, user_id, session_id, message
         )
 
-        messages = await run_blocking(load_chat_context, db, session_id, message)
+        history_messages = await run_blocking(load_chat_context, db, session_id, message)
+        # 检索相关记忆，注入主循环。Agent 不写 chat 缓存，不会污染下一轮。
+        memory_messages = await run_blocking(
+            build_memory_messages,
+            db,
+            user_id,
+            message,
+            session_id,
+        )
+        messages = memory_messages + history_messages
 
         run = await run_blocking(
             create_agent_run,
@@ -184,7 +196,9 @@ async def agent_stream_service(
                 total_tokens=outcome.usage.total_tokens,
                 parent_id=user_message.id,
             )
-        await run_blocking(enqueue_memory_extraction, user_id, message)
+        await run_blocking(
+            enqueue_memory_extraction, user_id, session_id, messages
+        )
 
         yield sse_event("done", AgentDoneEvent(run_id=run.id, status=status))
         await run_blocking(clear_generation_status, session_id)

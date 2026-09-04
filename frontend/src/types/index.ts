@@ -290,10 +290,24 @@ export interface UploadErrorEvent {
 export type UploadSSEEvent = UploadProgressEvent | UploadDoneEvent | UploadErrorEvent
 
 // ===== 用户记忆相关类型 =====
+/** 记忆类型（与后端 MemoryType 枚举对齐） */
+export type MemoryType = 'semantic' | 'episodic'
+
 /** 单条记忆（前端统一使用 id，api 层负责将后端 memory_id 归一化） */
 export interface MemoryItem {
   id: number
+  type: MemoryType
+  /** semantic 的稳定 key；episodic 始终为 null */
+  key: string | null
+  /** semantic 的事实内容 */
+  value: string | null
+  /** episodic 的事件摘要 */
+  summary: string | null
+  /** episodic 的事件类型标签，例如 decision / preference_change */
+  event_type: string | null
+  /** 用于卡片展示的统一文本（value 或 summary） */
   content: string
+  importance: number
   created_at: string | null
   updated_at: string | null
 }
@@ -308,8 +322,14 @@ export interface MemoryMutationResponse {
   memory: MemoryItem
 }
 
+/** 新建记忆：semantic 填 value（key 留空时后端自动生成），episodic 填 summary */
 export interface MemoryCreateRequest {
-  content: string
+  type: MemoryType
+  key?: string | null
+  value?: string | null
+  summary?: string | null
+  event_type?: string | null
+  importance?: number
 }
 
 export interface MemoryUpdateRequest {

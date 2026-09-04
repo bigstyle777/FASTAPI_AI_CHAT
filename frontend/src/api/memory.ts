@@ -5,24 +5,36 @@
 import { request, type ApiResult } from './http'
 import type {
   ActionResponse,
+  MemoryCreateRequest,
   MemoryItem,
   MemoryListResponse,
   MemoryMutationResponse,
 } from '@/types'
 
-/** 后端 MemoryResponse 使用 memory_id 字段，这里归一化为前端契约的 id */
+/** 后端 MemoryRead 的原始字段。id 来自 Pydantic 字段名（已经是 id，不再是 memory_id）。 */
 interface RawMemoryItem {
-  memory_id?: number
-  id?: number
-  content: string
+  id: number
+  type: 'semantic' | 'episodic'
+  key: string | null
+  value: string | null
+  summary: string | null
+  event_type: string | null
+  importance: number
   created_at: string | null
   updated_at: string | null
 }
 
 function normalizeMemory(raw: RawMemoryItem): MemoryItem {
+  const content = raw.type === 'semantic' ? (raw.value ?? '') : (raw.summary ?? '')
   return {
-    id: raw.memory_id ?? raw.id ?? 0,
-    content: raw.content,
+    id: raw.id,
+    type: raw.type,
+    key: raw.key,
+    value: raw.value,
+    summary: raw.summary,
+    event_type: raw.event_type,
+    importance: raw.importance ?? 0.5,
+    content,
     created_at: raw.created_at,
     updated_at: raw.updated_at,
   }
@@ -45,11 +57,13 @@ export async function fetchMemories(): Promise<ApiResult<MemoryListResponse>> {
 }
 
 /** 创建一条记忆 */
-export async function createMemory(content: string): Promise<ApiResult<MemoryMutationResponse>> {
+export async function createMemory(
+  payload: MemoryCreateRequest,
+): Promise<ApiResult<MemoryMutationResponse>> {
   const result = await request<{ success: boolean; memory: RawMemoryItem }>({
     url: '/memories',
     method: 'POST',
-    data: { content },
+    data: payload,
   })
   if (!result.ok) return result
   return { ok: true, data: { success: result.data.success, memory: normalizeMemory(result.data.memory) } }

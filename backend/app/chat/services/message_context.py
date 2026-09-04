@@ -1,6 +1,5 @@
 from ...core.cache import get_chat_context, set_chat_context
 from ...core.config import settings
-from ...memory.services.memory import build_memory_context
 from ...rag.prompts import build_context_message
 from ...rag.retriever import retrieve_relevant_chunks
 
@@ -11,49 +10,35 @@ from ..repository import (
     get_messages_up_to,
     get_session_by_id,
 )
+from ...memory.retriever import build_memory_context, retrieve_memories
 
 
-def build_chat_context(
+def build_memory_messages(
     db,
-    user_id,
-    messages,
-):
-    context_messages = []
+    user_id: int,
+    query: str,
+    session_id: int | None = None,
+) -> list[dict[str, str]]:
+    """检索相关记忆，拼成可放进 system 的消息列表（可为空）。
 
-    # 1. Memory
-    memory = build_memory_context(
-        db,
-        user_id,
-    )
-
-    if memory:
-        context_messages.append(
-            {
-                "role": "system",
-                "content": memory,
-            }
-        )
-    # 2. RAG
-    user_query = messages[-1]["content"]
-
-    chunks = retrieve_relevant_chunks(
-        db,
-        user_id,
-        user_query,
-        top_k=5,
-    )
-
-    rag_message = build_context_message(
-        chunks,
-        max_chars=3000,
-    )
-
-    if rag_message:
-        context_messages.append(rag_message)
-
-    # 3. 原来的聊天历史
-    context_messages.extend(messages)
-    return context_messages
+    调用方应把本函数返回的列表与历史消息拼起来再喂给 LLM ——
+    关键是这些消息**不要**写进 ``save_chat_context`` 的缓存里。
+    下次会话可能用相同的 query 重新检索，最新一轮的记忆才能体现；
+    把记忆烤进缓存会让它"凝固"，越攒越旧。
+    """
+    if not settings.memory_enabled:
+        return []
+    memories = retrieve_memories(db, query, user_id, session_id=session_id)
+    text = build_memory_context(memories)
+    if not text:
+        return []
+    return [{
+        "role": "system",
+        "content": (
+            "以下是关于该用户的记忆，仅供参考；与用户最新说法冲突时"
+            "以用户最新说法为准：\n" + text
+        ),
+    }]
 
 
 def to_chat_messages(messages) -> list[dict[str, str]]:

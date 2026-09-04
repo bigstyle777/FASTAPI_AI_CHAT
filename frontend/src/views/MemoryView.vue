@@ -11,7 +11,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 import { useUiStore } from '@/stores/ui'
 import { createMemory, deleteMemory, fetchMemories, updateMemory } from '@/api/memory'
-import type { MemoryItem } from '@/types'
+import type { MemoryItem, MemoryType } from '@/types'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -41,9 +41,18 @@ const isLoading = ref(true)
 const loadError = ref('')
 
 // ===== 新增 =====
+const newType = ref<MemoryType>('semantic')
 const newContent = ref('')
+const newKey = ref('')
+const newEventType = ref('')
 const isCreating = ref(false)
-const canSubmit = computed(() => newContent.value.trim().length > 0 && !isCreating.value)
+
+const canSubmit = computed(() => {
+  const text = newContent.value.trim()
+  if (!text || isCreating.value) return false
+  if (newType.value === 'semantic') return text.length > 0
+  return text.length > 0
+})
 
 // ===== 编辑 =====
 const editingId = ref<number | null>(null)
@@ -86,12 +95,22 @@ async function handleCreate() {
   if (!content || isCreating.value) return
 
   isCreating.value = true
-  const result = await createMemory(content)
+  const payload = newType.value === 'semantic'
+    ? { type: 'semantic' as const, value: content, key: newKey.value.trim() || null }
+    : {
+        type: 'episodic' as const,
+        summary: content,
+        event_type: newEventType.value.trim() || null,
+      }
+
+  const result = await createMemory(payload)
   if (!result.ok || !result.data.success) {
     showToast(!result.ok ? result.message : '保存失败，请稍后再试', 'error')
   } else {
     memories.value.unshift(result.data.memory)
     newContent.value = ''
+    newKey.value = ''
+    newEventType.value = ''
     showToast('记忆已保存')
   }
   isCreating.value = false
@@ -295,12 +314,40 @@ onUnmounted(() => {
       <!-- 新增记忆卡片 -->
       <div class="memory-create-card">
         <div class="memory-create-label">新增记忆</div>
+        <div class="memory-type-tabs">
+          <button
+            v-for="opt in [
+              { value: 'semantic', label: '语义', hint: '稳定事实 / 偏好' },
+              { value: 'episodic', label: '事件', hint: '这次对话里发生了什么' },
+            ]"
+            :key="opt.value"
+            :class="['memory-type-tab', { active: newType === opt.value }]"
+            type="button"
+            @click="newType = opt.value as MemoryType"
+          >
+            {{ opt.label }}
+          </button>
+        </div>
+        <input
+          v-if="newType === 'semantic'"
+          v-model="newKey"
+          class="memory-key-input"
+          maxlength="120"
+          placeholder="key（可选，留空按内容自动生成）"
+        />
+        <input
+          v-else
+          v-model="newEventType"
+          class="memory-key-input"
+          maxlength="40"
+          placeholder="事件类型，例如 decision / preference_change（可选）"
+        />
         <textarea
           v-model="newContent"
           class="memory-textarea"
           rows="3"
           maxlength="2000"
-          placeholder="记录一条新的记忆…例如：我是一名后端工程师，偏好简洁的回答。"
+          :placeholder="newType === 'semantic' ? '记录一条稳定的事实或偏好，例如：偏好 4 个空格缩进。' : '记录这次对话里发生了什么决定，例如：决定知识库改用 pgvector。'"
         ></textarea>
         <div class="memory-create-footer">
           <span
@@ -361,7 +408,16 @@ onUnmounted(() => {
         >
           <!-- 阅读模式 -->
           <template v-if="editingId !== memory.id">
-            <p class="memory-content">{{ memory.content }}</p>
+            <div class="memory-content-row">
+              <span :class="['memory-type-pill', memory.type]">
+                {{ memory.type === 'semantic' ? '语义' : '事件' }}
+              </span>
+              <p class="memory-content">{{ memory.content }}</p>
+            </div>
+            <div v-if="memory.key || memory.event_type" class="memory-sub-meta">
+              <span v-if="memory.key">key: {{ memory.key }}</span>
+              <span v-if="memory.event_type">事件类型: {{ memory.event_type }}</span>
+            </div>
             <div class="memory-card-footer">
               <div class="memory-meta">
                 <span>创建 {{ formatTime(memory.created_at) }}</span>
@@ -465,5 +521,81 @@ onUnmounted(() => {
 <style scoped>
 .over-limit {
   color: var(--danger) !important;
+}
+
+.memory-type-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.memory-type-tab {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--border-tertiary, rgba(0, 0, 0, 0.12));
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.15s ease;
+}
+
+.memory-type-tab.active {
+  background: var(--accent, #378add);
+  border-color: var(--accent, #378add);
+  color: #fff;
+}
+
+.memory-key-input {
+  width: 100%;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  border: 1px solid var(--border-tertiary, rgba(0, 0, 0, 0.12));
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  box-sizing: border-box;
+}
+
+.memory-content-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.memory-type-pill {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.memory-type-pill.semantic {
+  background: rgba(55, 138, 221, 0.12);
+  color: #185fa5;
+}
+
+.memory-type-pill.episodic {
+  background: rgba(186, 117, 23, 0.12);
+  color: #854f0b;
+}
+
+.memory-content-row .memory-content {
+  flex: 1;
+  margin: 0;
+}
+
+.memory-sub-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-bottom: 8px;
 }
 </style>

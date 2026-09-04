@@ -10,6 +10,7 @@ from ...core.sse import sse_event
 from ...core.exceptions import BusinessError
 from ...core.stop_signal import StopWatcher, clear_stopped, mark_stopped
 from ...task.memory_queue import enqueue_memory_extraction
+from .message_context import build_memory_messages
 from ..repository import (
     delete_message,
     delete_message_pair,
@@ -77,7 +78,15 @@ async def send_message_service(db, user, request):
     )
 
     # 非流式接口同样走"喂模型"的上下文，别把整个会话历史塞进去
-    messages = await run_blocking(load_model_context, db, request.session_id)
+    history_messages = await run_blocking(load_model_context, db, request.session_id)
+    memory_messages = await run_blocking(
+        build_memory_messages,
+        db,
+        user["user_id"],
+        message,
+        request.session_id,
+    )
+    messages = memory_messages + history_messages
     ai_reply = await chat_with_ai(
         messages=messages, user_id=user["user_id"], db=db
     )
@@ -89,7 +98,12 @@ async def send_message_service(db, user, request):
         ai_reply,
         parent_id=user_message.id,
     )
-    await run_blocking(enqueue_memory_extraction, user["user_id"], message)
+    await run_blocking(
+        enqueue_memory_extraction,
+        user["user_id"],
+        request.session_id,
+        messages,
+    )
 
     return {"success": True}
 
@@ -170,7 +184,14 @@ async def stream_ai_reply(
 
     user_message_text = _last_user_message_text(messages)
     if user_message_text:
-        await run_blocking(enqueue_memory_extraction, user_id, user_message_text)
+        # 把记忆系统消息和当前用户问题一并交给提取 LLM，
+        # 让它能看见本轮用到的上下文，避免漏掉对话里的隐含意图
+        await run_blocking(
+            enqueue_memory_extraction,
+            user_id,
+            session_id,
+            messages,
+        )
     yield sse_event("usage", StreamUsageEvent(usage=usage))
     yield sse_event("done", StreamDoneEvent())
     await run_blocking(clear_generation_status, session_id)
@@ -244,7 +265,19 @@ async def send_message_stream_service(db, user, request):
             persist_user_message, db, user_id, request.session_id, message
         )
 
-        messages = await run_blocking(load_chat_context, db, request.session_id, message)
+        # 缓存路径（history_messages）与模型路径（messages）必须分开：
+        # 记忆检索结果会变化、也会过时，烤进缓存会"凝固"并污染后续会话。
+        history_messages = await run_blocking(
+            load_chat_context, db, request.session_id, message
+        )
+        memory_messages = await run_blocking(
+            build_memory_messages,
+            db,
+            user_id,
+            message,
+            request.session_id,
+        )
+        messages = memory_messages + history_messages
 
         async for event in stream_ai_reply(
             db,
@@ -252,7 +285,7 @@ async def send_message_stream_service(db, user, request):
             request.session_id,
             messages,
             parent_id=user_message.id,
-            history_messages=messages,
+            history_messages=history_messages,
         ):
             yield event
 

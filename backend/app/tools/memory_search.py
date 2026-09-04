@@ -1,16 +1,20 @@
 def search_memory(query: str, top_k: int = 5, db=None, user_id=None) -> dict:
-    # 函数内延迟导入：避免 tools 和 services 互相导入时产生循环依赖
-    from ..services.memory_embedding import retrieve_relevant_memories
+    # 函数内延迟导入：避免 tools 和 memory 互相导入时产生循环依赖
+    from ..memory.retriever import retrieve_memories
 
-    hits = retrieve_relevant_memories(db, user_id, query, top_k)
+    if db is None or user_id is None:
+        return {"query": query, "hits": []}
+
+    hits = retrieve_memories(db, query, user_id, top_k=top_k)
+
     return {
         "query": query,
         "hits": [
             {
-                "memory_id": hit.memory_id,
+                "memory_id": hit.id,
+                "type": hit.type.value,
                 "content": hit.content,
-                "sentence": hit.sentence,
-                "score": round(hit.score, 4),
+                "score": hit.score,
             }
             for hit in hits
         ],
@@ -23,8 +27,9 @@ TOOLS = [
         "function": {
             "name": "search_memory",
             "description": (
-                "检索用户的长期记忆库（向量检索）。当用户提到自己的偏好、习惯、目标、"
-                "长期项目、编程技术栈、之前约定等个人化信息，或你的回答需要这些背景时调用。"
+                "检索用户的长期记忆库（向量 + 精确匹配 + 同会话混合）。"
+                "当用户提到自己的偏好、习惯、目标、长期项目、之前约定等个人化信息，"
+                "或你的回答需要这些背景时调用。"
             ),
             "parameters": {
                 "type": "object",

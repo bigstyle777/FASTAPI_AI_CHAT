@@ -1,3 +1,9 @@
+"""记忆页的 CRUD 接口：/memories。
+
+这一层只做参数校验和序列化，业务规则都在 repository / manager 里。
+"""
+
+from hashlib import sha256
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
@@ -7,18 +13,21 @@ from ..chat.schemas import ActionResponse
 from ..core.database import get_db
 from ..core.exceptions import BusinessError
 from ..user.services.auth import get_current_user
+from .repository import (
+    create_episodic,
+    delete_memory,
+    get_by_id,
+    list_by_user,
+    update_content,
+    upsert_semantic,
+)
 from .schemas import (
     MemoryCreateRequest,
     MemoryListResponse,
     MemoryMutationResponse,
-    MemoryResponse,
+    MemoryRead,
+    MemoryType,
     MemoryUpdateRequest,
-)
-from .services.memory import (
-    create_memory_service,
-    delete_memory_service,
-    get_memories_service,
-    update_memory_service,
 )
 
 router = APIRouter(prefix="/memories", tags=["Memories"])
@@ -26,41 +35,70 @@ CurrentUser = Annotated[dict[str, Any], Depends(get_current_user)]
 Database = Annotated[Session, Depends(get_db)]
 
 
-def _format_dt(value):
-    if value is None:
-        return None
-    if isinstance(value, str):
-        return value
-    return value.isoformat(timespec="seconds")
+def _auto_key(value: str) -> str:
+    """用户没填 key 时，按内容生成一个稳定 key。
+
+    同一段内容永远得到同一个 key，重复保存会覆盖而不是堆两条。
+    """
+    digest = sha256(value.encode("utf-8")).hexdigest()[:12]
+    return f"note_{digest}"
 
 
-def _serialize_memory(memory) -> MemoryResponse:
-    return MemoryResponse(
-        memory_id=memory.id,
-        content=memory.content,
-        created_at=_format_dt(memory.created_at),
-        updated_at=_format_dt(memory.updated_at),
-    )
+def _serialize(memory) -> MemoryRead:
+    return MemoryRead.model_validate(memory)
 
 
 @router.get("", response_model=MemoryListResponse)
 def list_memories(user: CurrentUser, db: Database):
-    """查看当前用户的记忆列表。"""
-    memories = get_memories_service(db, user["user_id"])
+    """列出当前用户的全部记忆（semantic + episodic，最新的在前）。"""
+    memories = list_by_user(db, user["user_id"])
     return {
         "success": True,
-        "memories": [_serialize_memory(memory) for memory in memories],
+        "memories": [_serialize(memory) for memory in memories],
     }
+
+
+@router.get("/{memory_id}", response_model=MemoryMutationResponse)
+def get_memory(memory_id: int, user: CurrentUser, db: Database):
+    """按 id 取一条记忆。"""
+    memory = get_by_id(db, memory_id, user["user_id"])
+    if memory is None:
+        raise BusinessError("记忆不存在")
+    return {"success": True, "memory": _serialize(memory)}
 
 
 @router.post("", response_model=MemoryMutationResponse)
 def create_memory(request: MemoryCreateRequest, user: CurrentUser, db: Database):
-    """新增一条记忆（保存后自动入队向量化）。"""
-    try:
-        memory = create_memory_service(db, user["user_id"], request.content)
-    except ValueError as error:
-        raise BusinessError(str(error))
-    return {"success": True, "memory": _serialize_memory(memory)}
+    """手动新增一条记忆。
+
+    semantic 需要 value（key 可留空，会自动生成）；episodic 需要 summary。
+    """
+    user_id = user["user_id"]
+
+    if request.type == MemoryType.SEMANTIC:
+        if not (request.value or "").strip():
+            raise BusinessError("语义记忆的内容不能为空")
+        memory = upsert_semantic(
+            db,
+            user_id,
+            (request.key or "").strip() or _auto_key(request.value.strip()),
+            request.value.strip(),
+            importance=request.importance,
+            source="user_input",
+        )
+    else:
+        if not (request.summary or "").strip():
+            raise BusinessError("事件记忆的摘要不能为空")
+        memory = create_episodic(
+            db,
+            user_id,
+            request.summary.strip(),
+            event_type=request.event_type,
+            importance=request.importance,
+            source="user_input",
+        )
+
+    return {"success": True, "memory": _serialize(memory)}
 
 
 @router.put("/{memory_id}", response_model=MemoryMutationResponse)
@@ -70,24 +108,16 @@ def update_memory(
     user: CurrentUser,
     db: Database,
 ):
-    """修改记忆内容；旧向量作废并自动重新向量化。"""
-    try:
-        memory = update_memory_service(
-            db,
-            user["user_id"],
-            memory_id,
-            request.content,
-        )
-    except ValueError as error:
-        raise BusinessError(str(error))
-    return {"success": True, "memory": _serialize_memory(memory)}
+    """修改记忆正文。episodic 改了正文后旧向量作废，需要等下次回填。"""
+    memory = update_content(db, memory_id, user["user_id"], request.content.strip())
+    if memory is None:
+        raise BusinessError("记忆不存在")
+    return {"success": True, "memory": _serialize(memory)}
 
 
 @router.delete("/{memory_id}", response_model=ActionResponse)
-def delete_memory(memory_id: int, user: CurrentUser, db: Database):
-    """删除记忆，同时清理 user_memories 和 user_memory_embeddings 两张表。"""
-    try:
-        delete_memory_service(db, user["user_id"], memory_id)
-    except ValueError as error:
-        raise BusinessError(str(error))
-    return {"success": True, "message": "Memory 已删除"}
+def remove_memory(memory_id: int, user: CurrentUser, db: Database):
+    """删除一条记忆。"""
+    if not delete_memory(db, memory_id, user["user_id"]):
+        raise BusinessError("记忆不存在")
+    return {"success": True, "message": "记忆已删除"}
