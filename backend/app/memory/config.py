@@ -112,3 +112,33 @@ def weights_for(type_: str) -> dict[str, float]:
             f"未知记忆类型: {type_!r}（可用: {sorted(TYPE_WEIGHTS)}）"
         )
     return dict(TYPE_WEIGHTS[type_])
+
+
+# ---------------------------------------------------------------------------
+# 记忆合并（Consolidation，Phase 5）
+# ---------------------------------------------------------------------------
+
+# 只在这个时间窗内找重复事件：太久远的要么已合并过，要么不值得再花
+# 一次 LLM 调用去归纳。
+CONSOLIDATION_WINDOW_DAYS: int = 7
+# 少于这么多条的组不合并 —— 单条事件没有"重复"可言。
+CONSOLIDATION_MIN_GROUP_SIZE: int = 2
+# 两条 episodic 摘要向量的余弦相似度达到这个值，才认为在讲同一类事。
+CONSOLIDATION_SIMILARITY_THRESHOLD: float = 0.78
+# 一次手动合并最多处理几组：每组一次 LLM 调用，限制成本与延迟。
+CONSOLIDATION_MAX_GROUPS: int = 5
+
+
+# ---------------------------------------------------------------------------
+# 记忆合并（Consolidation，Phase 5）
+# ---------------------------------------------------------------------------
+
+# 只在这个时间窗内找重复事件：太久远的要么已合并过，要么不值得再花
+# 一次 LLM 调用去归纳。
+CONSOLIDATION_WINDOW_DAYS: int = 7
+# 少于这么多条的组不合并 —— 单条事件没有"重复"可言。
+CONSOLIDATION_MIN_GROUP_SIZE: int = 2
+# 两条 episodic 摘要向量的余弦相似度达到这个值，才认为在讲同一类事。
+CONSOLIDATION_SIMILARITY_THRESHOLD: float = 0.78
+# 一次手动合并最多处理几组：每组一次 LLM 调用，限制成本与延迟。
+CONSOLIDATION_MAX_GROUPS: int = 5

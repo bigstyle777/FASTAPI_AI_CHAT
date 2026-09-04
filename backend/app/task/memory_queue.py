@@ -3,6 +3,7 @@
 Memory Phase 1-3 MVP：异步管线只剩"对话结束后提取 + 落库"这一条，
 向量化在 manager.apply_actions 里同步算（详见 manager.py），
 回填由同一个 Celery 任务顺便处理。
+Phase 5：新增手动触发的 episodic 合并任务入队封装（无定时器，按用户决定）。
 """
 
 import logging
@@ -26,4 +27,22 @@ def enqueue_memory_extraction(
         return True
     except Exception:
         logger.exception("Failed to enqueue memory extraction")
+        return False
+
+
+def enqueue_consolidation(user_id: int) -> bool:
+    """把"合并重复 episodic"任务放进 Celery 队列（记忆页手动触发）。
+
+    合并每组要调一次 LLM，比较慢，所以走队列而不是同步执行。
+    """
+    try:
+        from .memory_tasks import consolidate_memories_task
+
+        consolidate_memories_task.apply_async(
+            args=(user_id,),
+            retry=False,
+        )
+        return True
+    except Exception:
+        logger.exception("Failed to enqueue memory consolidation")
         return False

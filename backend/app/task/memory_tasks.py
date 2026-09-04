@@ -4,6 +4,7 @@ import logging
 
 from ..core.celery_worker import celery_app
 from ..core.database import SessionLocal
+from ..memory.consolidator import run_consolidation_for_user
 from ..memory.extractor import extract_memories_for_user
 from ..memory.manager import apply_actions, backfill_missing_embeddings
 
@@ -33,5 +34,26 @@ def extract_and_save_memory_task(
     except Exception:
         logger.exception("提取并保存记忆后台任务失败")
         return {"applied": [], "backfilled": 0}
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.task.memory_tasks.consolidate_memories_task")
+def consolidate_memories_task(user_id: int):
+    """手动触发的 episodic 合并：找重复组 → 逐组 LLM 归纳 → 落库。
+
+    按用户决定不引入定时调度（无 Beat），由用户在记忆页点击"合并"
+    或运维手动调用入队。失败不重试 —— 重复事件下次再跑即可。
+    """
+    db = SessionLocal()
+    try:
+        result = run_consolidation_for_user(db, user_id)
+        logger.info(
+            "用户 %s 记忆合并完成: %s", user_id, result
+        )
+        return result
+    except Exception:
+        logger.exception("用户 %s 记忆合并后台任务失败", user_id)
+        return {"consolidated": 0, "reason": "internal_error"}
     finally:
         db.close()

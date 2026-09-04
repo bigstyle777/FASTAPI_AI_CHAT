@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from .models import Memory
 from .schemas import MemoryType
+from .status import ACTIVE, CONSOLIDATED
 
 
 # ---------------------------------------------------------------------------
@@ -362,3 +363,98 @@ def delete_by_session(db: Session, session_id: int) -> int:
     )
     db.commit()
     return result.rowcount
+
+
+# ---------------------------------------------------------------------------
+# Consolidation（Phase 5）
+# ---------------------------------------------------------------------------
+
+
+def list_consolidation_candidates(
+    db: Session,
+    user_id: int,
+    *,
+    since: datetime,
+    limit: int = 500,
+) -> list[Memory]:
+    """找出时间窗内可参与合并的 episodic 记忆。
+
+    只收 status=active（已被合并过的 CONSOLIDATED 不重复进组）且
+    有向量的行 —— 聚类靠摘要向量算相似度，没向量无从比。
+    按创建时间升序返回，保证组内顺序即事件发生顺序。
+    """
+    stmt = (
+        select(Memory)
+        .where(
+            Memory.user_id == user_id,
+            Memory.type == MemoryType.EPISODIC.value,
+            Memory.status == ACTIVE,
+            Memory.created_at >= since,
+            Memory.embedding.is_not(None),
+        )
+        .order_by(Memory.created_at.asc())
+        .limit(limit)
+    )
+    return list(db.execute(stmt).scalars().all())
+
+
+def consolidate_episodes(
+    db: Session,
+    user_id: int,
+    source_ids: list[int],
+    *,
+    summary: str,
+    importance: float,
+    confidence: float,
+    event_type: str | None,
+    embedding: list[float] | None = None,
+    metadata: dict | None = None,
+) -> Memory | None:
+    """把一组 episodic 合并成一条高层总结 —— 单事务，要么全成要么全不动。
+
+    1. 校验：所有源记忆必须属于该用户、是 episodic、仍是 active；
+       校验不过（例如其中一条已被别的合并抢先处理）返回 None 不落库。
+    2. 新建一条 episodic（source="consolidation"），metadata 里带
+       source_episode_ids 溯源。
+    3. 原 episodes 标记 status=CONSOLIDATED、consolidated_into_id 指向
+       新总结。不物理删除 —— 溯源永远保留原文。
+
+    注意：本函数在 consolidator 里先调完 LLM 再进来，摘要与分数都
+    是现成的；它只负责"落库这一步"是原子的。
+    """
+    originals = db.execute(
+        select(Memory).where(
+            Memory.id.in_(source_ids),
+            Memory.user_id == user_id,
+            Memory.type == MemoryType.EPISODIC.value,
+            Memory.status == ACTIVE,
+        )
+    ).scalars().all()
+    if len(originals) < 2:
+        return None
+
+    originals.sort(key=lambda m: m.created_at)
+    meta = dict(metadata or {})
+    meta.setdefault("source_episode_ids", sorted(m.id for m in originals))
+
+    merged = Memory(
+        user_id=user_id,
+        type=MemoryType.EPISODIC.value,
+        summary=summary,
+        event_type=event_type,
+        importance=importance,
+        confidence=confidence,
+        source="consolidation",
+        embedding=embedding,
+        metadata_=meta,
+    )
+    db.add(merged)
+    db.flush()  # 先拿到 merged.id 才能回填到原文
+
+    for original in originals:
+        original.status = CONSOLIDATED
+        original.consolidated_into_id = merged.id
+
+    db.commit()
+    db.refresh(merged)
+    return merged

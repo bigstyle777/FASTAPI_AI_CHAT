@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from ..chat.schemas import ActionResponse
 from ..core.database import get_db
 from ..core.exceptions import BusinessError
+from ..task.memory_queue import enqueue_consolidation
 from ..user.services.auth import get_current_user
 from .repository import (
     create_episodic,
@@ -113,6 +114,18 @@ def update_memory(
     if memory is None:
         raise BusinessError("记忆不存在")
     return {"success": True, "memory": _serialize(memory)}
+
+
+@router.post("/consolidate", response_model=ActionResponse)
+def trigger_consolidation(user: CurrentUser):
+    """手动触发一次 episodic 合并（重复事件归并为高层总结）。
+
+    实际工作在 Celery worker 上异步跑，这里只负责入队；
+    入队失败（worker 未启动等）返回业务错误而不是假成功。
+    """
+    if not enqueue_consolidation(user["user_id"]):
+        raise BusinessError("合并任务提交失败，请确认后台任务服务已启动后重试")
+    return {"success": True, "message": "记忆合并任务已提交，完成后可在列表看到结果"}
 
 
 @router.delete("/{memory_id}", response_model=ActionResponse)
