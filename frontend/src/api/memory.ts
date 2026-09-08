@@ -87,3 +87,19 @@ export async function updateMemory(
 export async function deleteMemory(memoryId: number): Promise<ApiResult<ActionResponse>> {
   return request<ActionResponse>({ url: `/memories/${memoryId}`, method: 'DELETE' })
 }
+
+/**
+ * 触发一次重复事件合并（把近期内反复发生的同类事件归纳成一条高层总结）。
+ * 后端只是入队，实际归纳在 Celery worker 上跑，需要稍后刷新才能看到结果。
+ */
+export async function consolidateMemories(): Promise<ApiResult<ActionResponse>> {
+  return request<ActionResponse>({ url: '/memories/consolidate', method: 'POST' })
+}
+
+/**
+ * 触发一次生命周期清扫（过期归档 / 长期未用降级 / 观察窗到期归档）。
+ * 同样是异步入队；归档只是不再参与检索，不会物理删除记忆。
+ */
+export async function decayMemories(): Promise<ApiResult<ActionResponse>> {
+  return request<ActionResponse>({ url: '/memories/decay', method: 'POST' })
+}

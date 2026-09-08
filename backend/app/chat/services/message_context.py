@@ -11,7 +11,7 @@ from ..repository import (
     get_session_by_id,
 )
 from ...memory.decay import reinforce_memories
-from ...memory.retriever import build_memory_context, retrieve_memories
+from ...memory.retriever import compose_memory_context, retrieve_memories
 
 
 def build_memory_messages(
@@ -28,23 +28,35 @@ def build_memory_messages(
     把记忆烤进缓存会让它"凝固"，越攒越旧。
 
     reinforce 触点在"记忆真的被拼进消息、即将喂给模型"这一刻：
-    检索命中只是"被看到"（刷新 last_accessed_at），拼进 prompt 才是
-    "被用上"，才累加 access_count / 上调 confidence —— 这正是
-    agent 运行时与记忆生命周期的唯一衔接点。
+    检索命中只是"被看到"，拼进 prompt 才是"被用上"，才累加 access_count
+    —— 这正是 agent 运行时与记忆生命周期的唯一衔接点。
+
+    两个细节别改回去：
+      1. retrieve_memories(mark_accessed=False)：既然下面马上要 reinforce（它
+         自己就会刷 last_accessed_at），再让检索层 touch 一次就是同一批 id
+         写两次库、提交两次事务；
+      2. 只 reinforce context.memory_ids 而不是全部检索结果：被字符预算砍掉
+         的那些根本没进 prompt，给它们计数会把 access_count 白涨到阈值、
+         提前提升为 REINFORCED。
+
+    reinforce 不会上调 confidence："跟当前问题相关"不等于"这条没记错"，
+    自动涨分会让常被召回的记忆自我强化、再也翻不了身（见 memory/config）。
     """
     if not settings.memory_enabled:
         return []
-    memories = retrieve_memories(db, query, user_id, session_id=session_id)
-    text = build_memory_context(memories)
-    if not text:
+    memories = retrieve_memories(
+        db, query, user_id, session_id=session_id, mark_accessed=False
+    )
+    context = compose_memory_context(memories)
+    if not context.text:
         return []
     # 即将进入模型上下文 → 确认这批记忆被用上了
-    reinforce_memories(db, user_id, [memory.id for memory in memories])
+    reinforce_memories(db, user_id, context.memory_ids)
     return [{
         "role": "system",
         "content": (
             "以下是关于该用户的记忆，仅供参考；与用户最新说法冲突时"
-            "以用户最新说法为准：\n" + text
+            "以用户最新说法为准：\n" + context.text
         ),
     }]
 

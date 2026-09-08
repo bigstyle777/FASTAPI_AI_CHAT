@@ -3,11 +3,10 @@
 验证 Memory System 不是退化成"朴素向量 RAG"。
 
 与最初设计稿的差异（按 app/memory 实际接口适配）：
-- MemoryManager 的签名是 ``MemoryManager(db, user_id, session_id=None)``，
-  user_id 在构造器里，retrieve 只收 (query, top_k)
+- 方案 A 移除了 MemoryManager 异步门面，这里直接调底层同步函数：
+  apply_actions（落库）、retrieve_memories（检索）、extract_memories_for_user（提取）
 - retrieve 返回 list[MemoryRead]（含 score），不是 list[Memory]
-- 项目没装 pytest-asyncio，这里用 asyncio.run() 包同步测试函数，
-  不引入新依赖
+- 底层本就是同步 SQLAlchemy，测试无需 asyncio 包装，直接同步调用
 - "破坏 embedding"直接用 ORM 把 embedding 置 NULL（原稿的
   repository.corrupt_embedding 方法不存在）
 - 场景六的自定义时间戳同样通过 ORM 回写 created_at / last_accessed_at
@@ -31,47 +30,28 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timedelta
 
 import pytest
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.memory.manager import MemoryManager
+from app.memory.extractor import extract_memories_for_user
+from app.memory.manager import apply_actions
 from app.memory.models import Memory
 from app.memory.reranker import Candidate, score_candidate
+from app.memory.retriever import retrieve_memories
 from app.memory.schemas import MemoryAction, MemoryActionType
 
 
-def _run(coro):
-    """在没有 pytest-asyncio 的环境里跑 MemoryManager 的 async 方法。"""
-    return asyncio.run(coro)
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def manager(db, user_id):
-    """用项目真实的依赖注入方式构造 MemoryManager。
-
-    db / user_id 来自 conftest（独立测试库 + 真实 users 行）。
-    session_id 传 None：这些场景不依赖"同会话"那一路检索。
-    """
-    return MemoryManager(db, user_id)
-
-
-async def _seed(manager, actions: list[dict]) -> list:
-    """把 action 灌进 manager.apply，跳过真实 LLM extraction。
+def _seed(db, user_id, actions: list[dict]) -> list:
+    """把 action 直接灌进 apply_actions，跳过真实 LLM extraction。
 
     用于不测 extractor 本身、只测 retrieval / ranking 逻辑的场景。
     返回落库后的 MemoryRead 列表（带 id，方便场景六回写时间戳）。
     """
     parsed = [MemoryAction(**a) for a in actions]
-    return await manager.apply(parsed)
+    return apply_actions(db, user_id, parsed)
 
 
 def _backdate(db, memory_id: int, days: int) -> None:
@@ -180,7 +160,7 @@ class TestRankingMath:
 
 
 @pytest.mark.llm
-def test_scenario1_noise_is_filtered(manager, db, user_id):
+def test_scenario1_noise_is_filtered(db, user_id):
     """寒暄/纠错类对话不应该产生任何 memory（真实调用 LLM extractor）。"""
     from app.core.ai_client import get_client, get_user_ai_settings
 
@@ -196,7 +176,7 @@ def test_scenario1_noise_is_filtered(manager, db, user_id):
         {"role": "user", "content": "不对我说错了，是这个意思"},
     ]
 
-    actions = _run(manager.extract(noisy_conversation))
+    actions = extract_memories_for_user(db, user_id, noisy_conversation)
 
     non_ignore = [a for a in actions if a.action != MemoryActionType.IGNORE]
     assert len(non_ignore) == 0, (
@@ -205,31 +185,30 @@ def test_scenario1_noise_is_filtered(manager, db, user_id):
     )
 
 
-def test_scenario2_semantic_exact_match_survives_broken_embedding(manager, db, user_id):
+def test_scenario2_semantic_exact_match_survives_broken_embedding(db, user_id):
     """即使 embedding 被清空，semantic 的 key/value 匹配仍应召回。
 
     注意查询里带上了 value 的字面（FastAPI）—— key/value 匹配是字面级的，
     完全的改述召回靠的是 semantic 的 value 向量（见 upsert_semantic 的
     docstring），两者是互补关系，这条测的是"没有向量也必须能查"。
     """
-    _run(
-        _seed(
-            manager,
-            [
-                {
-                    "action": "UPSERT",
-                    "type": "semantic",
-                    "key": "backend_framework",
-                    "value": "FastAPI",
-                    "importance": 0.8,
-                    "confidence": 0.95,
-                }
-            ],
-        )
+    _seed(
+        db,
+        user_id,
+        [
+            {
+                "action": "UPSERT",
+                "type": "semantic",
+                "key": "backend_framework",
+                "value": "FastAPI",
+                "importance": 0.8,
+                "confidence": 0.95,
+            }
+        ],
     )
     _corrupt_embedding(db, user_id, "backend_framework")
 
-    results = _run(manager.retrieve("FastAPI 做后端怎么样", top_k=5))
+    results = retrieve_memories(db, "FastAPI 做后端怎么样", user_id, top_k=5)
 
     matched = [
         m for m in results
@@ -241,32 +220,31 @@ def test_scenario2_semantic_exact_match_survives_broken_embedding(manager, db, u
     )
 
 
-def test_scenario2_exact_key_match_with_null_embedding(manager, db, user_id):
+def test_scenario2_exact_key_match_with_null_embedding(db, user_id):
     """审查要求 4：exact key match 在 embedding 字段为 NULL 时依然能命中。
 
     semantic 检索对 embedding 是"并且"关系，不是"依赖"关系 ——
     字面匹配这条路不碰向量字段，任何情况下都执行。
     """
-    _run(
-        _seed(
-            manager,
-            [
-                {
-                    "action": "UPSERT",
-                    "type": "semantic",
-                    "key": "employment_status",
-                    "value": "已从字节离职，目前自由职业",
-                    "importance": 0.8,
-                    "confidence": 0.95,
-                }
-            ],
-        )
+    _seed(
+        db,
+        user_id,
+        [
+            {
+                "action": "UPSERT",
+                "type": "semantic",
+                "key": "employment_status",
+                "value": "已从字节离职，目前自由职业",
+                "importance": 0.8,
+                "confidence": 0.95,
+            }
+        ],
     )
     # 直接把整条记录的向量清空（NULL），模拟 embedding 从未生成
     _corrupt_embedding(db, user_id, "employment_status")
 
     # query 用 key 的精确拼写，走 exact_key_match
-    results = _run(manager.retrieve("employment_status", top_k=5))
+    results = retrieve_memories(db, "employment_status", user_id, top_k=5)
 
     matched = [m for m in results if getattr(m, "key", None) == "employment_status"]
     assert len(matched) == 1, (
@@ -275,30 +253,29 @@ def test_scenario2_exact_key_match_with_null_embedding(manager, db, user_id):
     )
 
 
-def test_scenario2_semantic_survives_embedding_disabled(manager, db, user_id, monkeypatch):
+def test_scenario2_semantic_survives_embedding_disabled(db, user_id, monkeypatch):
     """全局关掉 embedding（memory_embedding_enabled=False）时，
     semantic 记忆仍应能靠字面匹配召回 —— 这就是"不强制 embedding"。"""
     monkeypatch.setattr(settings, "memory_embedding_enabled", False)
 
     # embedding 被禁用，apply_actions 不会给任何行写向量
-    _run(
-        _seed(
-            manager,
-            [
-                {
-                    "action": "UPSERT",
-                    "type": "semantic",
-                    "key": "preferred_stack",
-                    "value": "用 Python + FastAPI 做后端",
-                    "importance": 0.8,
-                    "confidence": 0.9,
-                }
-            ],
-        )
+    _seed(
+        db,
+        user_id,
+        [
+            {
+                "action": "UPSERT",
+                "type": "semantic",
+                "key": "preferred_stack",
+                "value": "用 Python + FastAPI 做后端",
+                "importance": 0.8,
+                "confidence": 0.9,
+            }
+        ],
     )
 
     # query 带上 value 的关键词
-    results = _run(manager.retrieve("FastAPI 后端栈", top_k=5))
+    results = retrieve_memories(db, "FastAPI 后端栈", user_id, top_k=5)
 
     matched = [m for m in results if getattr(m, "key", None) == "preferred_stack"]
     assert matched, (
@@ -307,28 +284,27 @@ def test_scenario2_semantic_survives_embedding_disabled(manager, db, user_id, mo
     )
 
 
-def test_scenario3_high_importance_recalled_despite_low_similarity(manager, user_id):
+def test_scenario3_high_importance_recalled_despite_low_similarity(db, user_id):
     """早期存入一条与 query 语义都不相似、但 importance 很高的偏好记忆，
     验证它不会被相似度阈值直接过滤掉。"""
-    _run(
-        _seed(
-            manager,
-            [
-                {
-                    "action": "CREATE",
-                    "type": "episodic",
-                    "summary": "用户明确表示不喜欢代码中出现魔法数字，认为应该用命名常量",
-                    "event_type": "preference",
-                    "importance": 0.9,
-                    "confidence": 0.9,
-                }
-            ],
-        )
+    _seed(
+        db,
+        user_id,
+        [
+            {
+                "action": "CREATE",
+                "type": "episodic",
+                "summary": "用户明确表示不喜欢代码中出现魔法数字，认为应该用命名常量",
+                "event_type": "preference",
+                "importance": 0.9,
+                "confidence": 0.9,
+            }
+        ],
     )
 
     query = "帮我 review 这段代码：if retries > 3: raise TimeoutError()"
 
-    results = _run(manager.retrieve(query, top_k=5))
+    results = retrieve_memories(db, query, user_id, top_k=5)
 
     matched = [m for m in results if "魔法数字" in m.summary]
     assert matched, (
@@ -338,40 +314,38 @@ def test_scenario3_high_importance_recalled_despite_low_similarity(manager, user
     )
 
 
-def test_scenario4_upsert_overwrites_contradicting_fact(manager, user_id):
+def test_scenario4_upsert_overwrites_contradicting_fact(db, user_id):
     """同一 key 的矛盾信息必须覆盖，不能并存。"""
-    _run(
-        _seed(
-            manager,
-            [
-                {
-                    "action": "UPSERT",
-                    "type": "semantic",
-                    "key": "employment_status",
-                    "value": "在字节跳动工作",
-                    "importance": 0.7,
-                    "confidence": 0.9,
-                }
-            ],
-        )
+    _seed(
+        db,
+        user_id,
+        [
+            {
+                "action": "UPSERT",
+                "type": "semantic",
+                "key": "employment_status",
+                "value": "在字节跳动工作",
+                "importance": 0.7,
+                "confidence": 0.9,
+            }
+        ],
     )
-    _run(
-        _seed(
-            manager,
-            [
-                {
-                    "action": "UPSERT",
-                    "type": "semantic",
-                    "key": "employment_status",
-                    "value": "已从字节离职，目前自由职业",
-                    "importance": 0.7,
-                    "confidence": 0.9,
-                }
-            ],
-        )
+    _seed(
+        db,
+        user_id,
+        [
+            {
+                "action": "UPSERT",
+                "type": "semantic",
+                "key": "employment_status",
+                "value": "已从字节离职，目前自由职业",
+                "importance": 0.7,
+                "confidence": 0.9,
+            }
+        ],
     )
 
-    results = _run(manager.retrieve("我现在在哪工作", top_k=5))
+    results = retrieve_memories(db, "我现在在哪工作", user_id, top_k=5)
 
     matches = [m for m in results if getattr(m, "key", None) == "employment_status"]
     assert len(matches) == 1, (
@@ -381,33 +355,32 @@ def test_scenario4_upsert_overwrites_contradicting_fact(manager, user_id):
     assert "离职" in matches[0].value or "自由职业" in matches[0].value
 
 
-def test_scenario5_importance_outranks_similarity_tie(manager, user_id):
+def test_scenario5_importance_outranks_similarity_tie(db, user_id):
     """两条对 query 相似度接近的记忆，importance 更高的应排前面。"""
-    _run(
-        _seed(
-            manager,
-            [
-                {
-                    "action": "CREATE",
-                    "type": "episodic",
-                    "summary": "用户今天喝了咖啡，心情不错",
-                    "event_type": "trivial",
-                    "importance": 0.1,
-                    "confidence": 0.5,
-                },
-                {
-                    "action": "CREATE",
-                    "type": "episodic",
-                    "summary": "用户决定将 MCP 作为 Agent 系统集成第三方工具的核心协议",
-                    "event_type": "decision",
-                    "importance": 0.95,
-                    "confidence": 0.95,
-                },
-            ],
-        )
+    _seed(
+        db,
+        user_id,
+        [
+            {
+                "action": "CREATE",
+                "type": "episodic",
+                "summary": "用户今天喝了咖啡，心情不错",
+                "event_type": "trivial",
+                "importance": 0.1,
+                "confidence": 0.5,
+            },
+            {
+                "action": "CREATE",
+                "type": "episodic",
+                "summary": "用户决定将 MCP 作为 Agent 系统集成第三方工具的核心协议",
+                "event_type": "decision",
+                "importance": 0.95,
+                "confidence": 0.95,
+            },
+        ],
     )
 
-    results = _run(manager.retrieve("最近有什么值得关注的事情", top_k=5))
+    results = retrieve_memories(db, "最近有什么值得关注的事情", user_id, top_k=5)
 
     assert results, "未召回任何记忆"
     top = results[0]
@@ -419,43 +392,41 @@ def test_scenario5_importance_outranks_similarity_tie(manager, user_id):
 
 
 def test_scenario6_recency_does_not_override_high_importance_old_memory(
-    manager, db, user_id
+    db, user_id
 ):
     """90 天前的高重要目标记忆，不能被刚发生的琐碎记忆靠 recency 压过去。"""
-    seeded = _run(
-        _seed(
-            manager,
-            [
-                {
-                    "action": "CREATE",
-                    "type": "episodic",
-                    "summary": "用户的核心目标是转型为 AI Agent 开发方向",
-                    "event_type": "goal",
-                    "importance": 0.95,
-                    "confidence": 0.95,
-                }
-            ],
-        )
+    seeded = _seed(
+        db,
+        user_id,
+        [
+            {
+                "action": "CREATE",
+                "type": "episodic",
+                "summary": "用户的核心目标是转型为 AI Agent 开发方向",
+                "event_type": "goal",
+                "importance": 0.95,
+                "confidence": 0.95,
+            }
+        ],
     )
     _backdate(db, seeded[0].id, days=90)
 
-    _run(
-        _seed(
-            manager,
-            [
-                {
-                    "action": "CREATE",
-                    "type": "episodic",
-                    "summary": "用户今天心情不错",
-                    "event_type": "trivial",
-                    "importance": 0.1,
-                    "confidence": 0.5,
-                }
-            ],
-        )
+    _seed(
+        db,
+        user_id,
+        [
+            {
+                "action": "CREATE",
+                "type": "episodic",
+                "summary": "用户今天心情不错",
+                "event_type": "trivial",
+                "importance": 0.1,
+                "confidence": 0.5,
+            }
+        ],
     )
 
-    results = _run(manager.retrieve("我的职业方向是什么", top_k=5))
+    results = retrieve_memories(db, "我的职业方向是什么", user_id, top_k=5)
 
     assert results, "未召回任何记忆"
     top = results[0]

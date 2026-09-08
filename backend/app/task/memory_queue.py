@@ -3,9 +3,11 @@
 Memory Phase 1-3 MVP：异步管线只剩"对话结束后提取 + 落库"这一条，
 向量化在 manager.apply_actions 里同步算（详见 manager.py），
 回填由同一个 Celery 任务顺便处理。
+提取输入只给"最近几条上下文 + 本轮"，不再把整段历史喂进去
+（见 memory/extractor.py 的 build_extraction_input）。
 Phase 5：新增手动触发的 episodic 合并任务入队封装。
 Phase 6：新增生命周期清扫（过期/降级/归档）任务入队封装。
-均无定时器，按用户决定由上层按需触发。
+均无定时器，由记忆页按钮按需触发。
 """
 
 import logging
@@ -17,13 +19,19 @@ def enqueue_memory_extraction(
     user_id: int,
     session_id: int | None,
     conversation: list[dict[str, str]],
+    focus_last: int = 2,
 ) -> bool:
-    """把"提取记忆 + 落库 + 回填向量"任务放进 Celery 队列。"""
+    """把"提取记忆 + 落库 + 回填向量"任务放进 Celery 队列。
+
+    conversation 请由 memory.extractor.build_extraction_input 组装（最后两条
+    是本轮 user/assistant），focus_last 默认 2 与之配套：提取只针对本轮，
+    前面的上下文仅用于消解指代。
+    """
     try:
         from .memory_tasks import extract_and_save_memory_task
 
         extract_and_save_memory_task.apply_async(
-            args=(user_id, session_id, conversation),
+            args=(user_id, session_id, conversation, focus_last),
             retry=False,
         )
         return True

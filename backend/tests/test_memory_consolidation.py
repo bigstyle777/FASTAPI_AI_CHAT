@@ -189,11 +189,22 @@ def _seed_episode(db, user_id, summary, *, vector=None, days_ago=0, status="acti
     return memory
 
 
-class _FakeConsolidationLLM:
-    """伪 LLM：返回一段写死的合并 JSON。"""
+_DEFAULT_SUMMARY = (
+    '{"summary":"用户反复抱怨魔法数字（多次）", '
+    '"importance":0.85, "confidence":0.9, "event_type":"preference"}'
+)
 
-    def __init__(self, summary='{"summary":"用户反复抱怨魔法数字（多次）", "importance":0.85, "confidence":0.9, "event_type":"preference"}'):
-        self._payload = summary
+
+class _FakeConsolidationLLM:
+    """伪 LLM：返回一段写死的合并 JSON。
+
+    payload 传 None 要按"没指定就用默认"处理，不能把 None 当成
+    "返回空内容" —— FakeClient(payload=None) 是默认构造，那样会让所有
+    期望合并成功的用例都因为 content=None 走到 llm_failed。
+    """
+
+    def __init__(self, summary=None):
+        self._payload = _DEFAULT_SUMMARY if summary is None else summary
 
     def create(self, **kwargs):
         return SimpleNamespace(
@@ -334,11 +345,19 @@ class TestConsolidateGroup:
 # ---------------------------------------------------------------------------
 
 
-def test_run_consolidation_without_ai_config_reports_gracefully(db, user_id):
+def test_run_consolidation_without_ai_config_reports_gracefully(
+    db, user_id, monkeypatch
+):
     """用户没配 AI 时不能崩，要返回明确的跳过原因。"""
     from app.memory.consolidator import run_consolidation_for_user
 
-    # user_id fixture 创建的用户没有 AI 设置，get_client 应为空
+    # user_id fixture 创建的用户没有 AI 设置。但 get_client 还会回落到
+    # 全局配置（settings.deepseek_api_key / openai_api_key）—— 开发机上
+    # 有 .env 时这两项是有值的，不显式清掉就走不到 no_ai_config 分支，
+    # 这条用例会在"有 Key 的机器"上假失败。
+    monkeypatch.setattr(settings, "deepseek_api_key", None)
+    monkeypatch.setattr(settings, "openai_api_key", None)
+
     result = run_consolidation_for_user(db, user_id)
     assert result["consolidated"] == 0
     assert result.get("reason") == "no_ai_config"

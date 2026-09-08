@@ -4,7 +4,7 @@
     ..\\.venv\\Scripts\\python.exe -m pytest tests/test_memory_decay.py -v
 
 覆盖：
-- reinforce：access_count / confidence 上调、DECAYING 拉回、达阈值
+- reinforce：access_count 累加、confidence 一律不动、DECAYING 拉回、达阈值
   提升 REINFORCED、归档记忆不受影响
 - run_decay：过期直归档、冷落降级（只降低 importance）、观察窗归档、
   全程不物理删除
@@ -42,8 +42,13 @@ from app.memory.status import (  # noqa: E402
 from app.memory import config as memory_config  # noqa: E402
 
 
-def _backdate(memory, *, days, last_accessed_days=None):
-    """把一条记忆整体回拨到过去（created/updated/last_accessed 一起）。"""
+def _backdate(db, memory, *, days, last_accessed_days=None):
+    """把一条记忆整体回拨到过去（created/updated/last_accessed 一起）并提交。
+
+    必须提交：conftest 的 db fixture 关掉了 autoflush，回拨只改内存里的
+    对象不会写库，run_decay 里的 SELECT 看到的还是"刚刚创建"的时间戳，
+    降级计数就会是 0（断言 `decayed == 1` 的那条也因此假失败过）。
+    """
     past = datetime.utcnow() - timedelta(days=days)
     memory.created_at = past
     memory.updated_at = past
@@ -53,6 +58,7 @@ def _backdate(memory, *, days, last_accessed_days=None):
         )
     else:
         memory.last_accessed_at = past
+    db.commit()
     return memory
 
 
@@ -62,7 +68,13 @@ def _backdate(memory, *, days, last_accessed_days=None):
 
 
 class TestReinforce:
-    def test_increments_access_and_confidence(self, db, user_id):
+    def test_increments_access_without_touching_confidence(self, db, user_id):
+        """reinforce 只计数，不给 confidence 涨分。
+
+        "被检索到并拼进上下文"只说明它跟当前问题相关，不构成"它没记错"
+        的证据。自动涨分会形成自我强化：越常被召回 → confidence 越高 →
+        rerank 里越靠前 → 更容易被召回，一条错的记忆就再也翻不了身。
+        """
         memory = create_episodic(db, user_id, "一次决定", importance=0.6, confidence=0.9)
 
         count = reinforce_memories(db, user_id, [memory.id])
@@ -70,7 +82,7 @@ class TestReinforce:
         assert count == 1
         fresh = get_by_id(db, memory.id, user_id)
         assert fresh.access_count == 1
-        assert fresh.confidence == pytest.approx(0.95)  # 0.9 + 0.05
+        assert fresh.confidence == pytest.approx(0.9)  # 原值不动
         assert fresh.last_accessed_at is not None
         assert fresh.status == ACTIVE  # 还没到提升阈值
 
@@ -114,11 +126,21 @@ class TestReinforce:
 
         assert reinforce_memories(db, user_id, [memory.id]) == 0
 
-    def test_confidence_caps_at_one(self, db, user_id):
-        memory = create_episodic(db, user_id, "置信度已满", confidence=0.98)
-        reinforce_memories(db, user_id, [memory.id])
+    def test_repeated_reinforce_never_moves_confidence(self, db, user_id):
+        """反复 reinforce 也只涨 access_count，confidence 始终等于提取时的值。"""
+        memory = create_episodic(db, user_id, "低置信但常被召回", confidence=0.3)
+
+        for _ in range(memory_config.REINFORCE_ACCESS_THRESHOLD + 2):
+            reinforce_memories(db, user_id, [memory.id])
+
         fresh = get_by_id(db, memory.id, user_id)
-        assert fresh.confidence == 1.0  # 0.98 + 0.05 → 封顶 1.0
+        assert fresh.confidence == pytest.approx(0.3)
+        assert fresh.access_count == memory_config.REINFORCE_ACCESS_THRESHOLD + 2
+        assert fresh.status == REINFORCED  # 状态该升还是升
+
+    def test_config_has_no_confidence_step_knob(self):
+        """旋钮本身就该不存在，防止下次有人把自动涨分加回去。"""
+        assert not hasattr(memory_config, "REINFORCE_CONFIDENCE_STEP")
 
 
 # ===========================================================================
@@ -129,7 +151,7 @@ class TestReinforce:
 class TestRunDecay:
     def test_stale_low_importance_becomes_decaying(self, db, user_id):
         memory = upsert_semantic(db, user_id, "temp_fact", "过时的小事", importance=0.2)
-        _backdate(memory, days=200)
+        _backdate(db, memory, days=200)
 
         result = run_decay(db, user_id)
 
@@ -139,7 +161,7 @@ class TestRunDecay:
 
     def test_high_importance_not_decayed(self, db, user_id):
         memory = upsert_semantic(db, user_id, "life_goal", "转型 AI Agent", importance=0.95)
-        _backdate(memory, days=200)
+        _backdate(db, memory, days=200)
 
         result = run_decay(db, user_id)
 
@@ -148,7 +170,7 @@ class TestRunDecay:
 
     def test_recently_accessed_not_decayed(self, db, user_id):
         memory = upsert_semantic(db, user_id, "recent", "刚用过", importance=0.2)
-        _backdate(memory, days=200, last_accessed_days=1)
+        _backdate(db, memory, days=200, last_accessed_days=1)
 
         result = run_decay(db, user_id)
         assert result["decayed"] == 0
@@ -179,7 +201,7 @@ class TestRunDecay:
 
     def test_no_physical_delete(self, db, user_id):
         memory = upsert_semantic(db, user_id, "archiving", "将被归档", importance=0.2)
-        _backdate(memory, days=200)
+        _backdate(db, memory, days=200)
         memory.expires_at = datetime.utcnow() - timedelta(days=1)
         db.commit()
 

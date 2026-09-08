@@ -5,17 +5,19 @@
 1. 纯逻辑测试（不需要数据库）
    - parse_extraction：JSON 解析、代码块容忍、噪声忽略
    - MemoryAction：字段校验与越界值钳制
-   - build_conversation_text：长会话截断
+   - build_conversation_text：长会话截断、本轮/上下文分段渲染
+   - build_extraction_input：只留最近几条上下文 + 本轮，剔除 system
    - recency_score：半衰期指数衰减（reranker 模块）
    - 权重配置：每类型五因子各自和为 1.0
    - score_candidate / rerank：五因子加权、exactness 加分、中间明细
-   - build_memory_context：按类型分块
+   - build_memory_context / compose_memory_context：按类型分块、回报真正被用上的 id
 
 2. 数据库测试（依赖 conftest 的测试库）
    - upsert_semantic：CREATE 与 UPDATE 的区分
    - create_episodic：episodic 行有 embedding 字段
    - get / list / update / delete
-   - retrieve_memories：mock embedding，三路合并排序，touch_accessed
+   - retrieve_memories：mock embedding，三路合并排序，touch_accessed 与
+     mark_accessed=False 的跳过
 
 用法（在 backend 目录下）：
     ..\\.venv\\Scripts\\python.exe -m pytest tests/test_memory.py -v
@@ -38,7 +40,12 @@ from sqlalchemy import select  # noqa: E402
 from app.admin.repository import create_role, get_role_by_name  # noqa: E402
 from app.core.config import settings  # noqa: E402
 from app.memory.config import TYPE_WEIGHTS, weights_for  # noqa: E402
-from app.memory.extractor import build_conversation_text, parse_extraction  # noqa: E402
+from app.memory import config as memory_config  # noqa: E402
+from app.memory.extractor import (  # noqa: E402
+    build_conversation_text,
+    build_extraction_input,
+    parse_extraction,
+)
 from app.memory.manager import apply_actions  # noqa: E402
 from app.memory.models import Memory  # noqa: E402
 from app.memory.repository import (  # noqa: E402
@@ -53,6 +60,7 @@ from app.memory.repository import (  # noqa: E402
 )
 from app.memory.retriever import (  # noqa: E402
     build_memory_context,
+    compose_memory_context,
     retrieve_memories,
 )
 from app.memory.reranker import (  # noqa: E402
@@ -167,6 +175,94 @@ class TestConversationTruncation:
         assert len(text) <= settings.memory_extraction_max_chars
         # 从尾部截，所以"开头"应该被切掉
         assert "开头" not in text
+
+
+class TestExtractionInput:
+    """提取输入只能是"最近几条上下文 + 本轮"。
+
+    整段历史喂进去会让 episodic（一律 CREATE、不幂等）每轮重复产出；
+    注入的记忆 system 消息喂回去则形成"提取自己记忆"的自我强化回路。
+    """
+
+    HISTORY = [
+        {"role": "system", "content": "以下是关于该用户的记忆：偏好 4 空格缩进"},
+        {"role": "user", "content": "第一轮问题"},
+        {"role": "assistant", "content": "第一轮回答"},
+        {"role": "user", "content": "第二轮问题"},
+        {"role": "assistant", "content": "第二轮回答"},
+        {"role": "user", "content": "就用它吧"},
+    ]
+
+    def test_focus_turn_is_last_two(self):
+        result = build_extraction_input(
+            self.HISTORY, user_text="就用它吧", assistant_text="好的，已选定方案 A"
+        )
+        assert result[-2] == {"role": "user", "content": "就用它吧"}
+        assert result[-1] == {
+            "role": "assistant",
+            "content": "好的，已选定方案 A",
+        }
+
+    def test_system_messages_dropped(self):
+        result = build_extraction_input(
+            self.HISTORY, user_text="就用它吧", assistant_text="好的"
+        )
+        assert all(item["role"] != "system" for item in result)
+        assert all("记忆" not in item["content"] for item in result)
+
+    def test_current_turn_not_duplicated(self):
+        """history 末尾已含本轮 user、甚至已就地 append 过本轮 assistant
+        （旧代码里 modify_message 路径就会这样），都不能在文本里出现两次。"""
+        history = [*self.HISTORY, {"role": "assistant", "content": "好的"}]
+        result = build_extraction_input(
+            history, user_text="就用它吧", assistant_text="好的"
+        )
+        assert sum(1 for item in result if item["content"] == "就用它吧") == 1
+        assert sum(1 for item in result if item["content"] == "好的") == 1
+
+    def test_context_capped(self):
+        result = build_extraction_input(
+            self.HISTORY, user_text="就用它吧", assistant_text="好的", max_context=2
+        )
+        # 2 条上下文 + 本轮 2 条
+        assert len(result) == 4
+        # 取的是最近的：第一轮被挤掉
+        assert all("第一轮" not in item["content"] for item in result)
+
+    def test_empty_assistant_not_padded(self):
+        """生成被中断时不补空的 assistant 轮。"""
+        result = build_extraction_input(
+            self.HISTORY, user_text="就用它吧", assistant_text=""
+        )
+        assert result[-1] == {"role": "user", "content": "就用它吧"}
+
+    def test_focus_section_rendered(self):
+        conversation = build_extraction_input(
+            self.HISTORY, user_text="就用它吧", assistant_text="好的"
+        )
+        text = build_conversation_text(conversation, focus_last=2)
+        assert memory_config.EXTRACTION_FOCUS_HEADER in text
+        assert memory_config.EXTRACTION_CONTEXT_HEADER in text
+        # 本轮必须在上下文段之后
+        assert text.index(memory_config.EXTRACTION_CONTEXT_HEADER) < text.index(
+            memory_config.EXTRACTION_FOCUS_HEADER
+        )
+
+    def test_no_section_by_default(self):
+        """focus_last 默认 0：不分段，保持旧的渲染行为。"""
+        text = build_conversation_text([
+            {"role": "user", "content": "你好"},
+            {"role": "assistant", "content": "你好呀"},
+        ])
+        assert memory_config.EXTRACTION_FOCUS_HEADER not in text
+        assert text == "用户：你好\n助手：你好呀"
+
+    def test_render_skips_system(self):
+        text = build_conversation_text([
+            {"role": "system", "content": "注入的记忆"},
+            {"role": "user", "content": "你好"},
+        ])
+        assert "注入的记忆" not in text
 
 
 class TestRecency:
@@ -466,8 +562,64 @@ class TestBuildMemoryContext:
         assert "- c：" not in text
 
 
+class TestComposeMemoryContext:
+    """compose_memory_context 除了文本还要回报"哪几条真的进了 prompt"。
+
+    这是 reinforce 的计数依据：被字符预算砍掉的记忆根本没被用上，
+    给它们累加 access_count 会提前把状态推到 REINFORCED。
+    """
+
+    @staticmethod
+    def _semantic(memory_id: int, key: str, value: str, importance: float = 0.9):
+        return MemoryRead(
+            id=memory_id, user_id=1, type=MemoryType.SEMANTIC,
+            key=key, value=value, importance=importance, confidence=0.9,
+        )
+
+    def test_reports_all_ids_when_nothing_trimmed(self):
+        memories = [self._semantic(1, "a", "甲"), self._semantic(2, "b", "乙")]
+        context = compose_memory_context(memories)
+        assert context.memory_ids == [1, 2]
+        assert "- a：" in context.text and "- b：" in context.text
+
+    def test_dropped_by_budget_are_not_reported(self):
+        memories = [
+            self._semantic(1, "a", "v" * 40, importance=0.9),
+            self._semantic(2, "b", "v" * 40, importance=0.8),
+            self._semantic(3, "c", "v" * 40, importance=0.1),
+        ]
+        context = compose_memory_context(memories, max_chars=120)
+        assert context.memory_ids == [1, 2]
+        assert 3 not in context.memory_ids
+
+    def test_fallback_keeps_highest_ranked_id(self):
+        """预算小到一条都放不下时，兜底保住的那条也要被报告。"""
+        memories = [
+            self._semantic(1, "top", "x" * 200, importance=0.9),
+            self._semantic(2, "mid", "x" * 200, importance=0.5),
+        ]
+        context = compose_memory_context(memories, max_chars=80)
+        assert context.memory_ids == [1]
+        assert "top" in context.text
+
+    def test_empty_input_reports_nothing(self):
+        context = compose_memory_context([])
+        assert context.text == ""
+        assert context.memory_ids == []
+
+    def test_zero_budget_reports_nothing(self):
+        context = compose_memory_context([self._semantic(1, "a", "甲")], max_chars=0)
+        assert context.text == ""
+        assert context.memory_ids == []
+
+    def test_build_memory_context_matches_compose_text(self):
+        """薄封装不能和 compose 的文本走样。"""
+        memories = [self._semantic(1, "a", "甲")]
+        assert build_memory_context(memories) == compose_memory_context(memories).text
+
+
 # ===========================================================================
-# 数据库测试 —— 依赖 conftest 的测试库 + fake embedding
+# 数据库测试 —— 依赖 conftest 的测试库 + deterministic_embedding 假向量
 # ===========================================================================
 
 
@@ -476,15 +628,6 @@ def _make_user(db, tag: str) -> int:
     if role is None:
         role = create_role(db, "user")
     return create_user(db, f"{tag}_user", "hashed-password", role.id).id
-
-
-@pytest.fixture(autouse=True)
-def fake_embedding(monkeypatch):
-    """用确定性的 hash-based 向量，绕开真实 embedding API。
-
-    不在这里定义 —— 直接复用 app/rag/embedding.py 已有的 _fallback_embedding。
-    那个函数按 sha256 生成 deterministic 向量，对相同文本永远一致。
-    """
 
 
 class TestUpsertSemantic:
@@ -552,10 +695,10 @@ class TestGetByKey:
 
 class TestCreateEpisodic:
     def test_create_with_embedding(self, db):
-        from app.rag.embedding import _fallback_embedding
+        from _embedding_stub import fake_vector
 
         user_id = _make_user(db, "episodic")
-        vector = _fallback_embedding("用户决定改用 pgvector")
+        vector = fake_vector("用户决定改用 pgvector")
         memory = create_episodic(
             db,
             user_id,
@@ -569,12 +712,12 @@ class TestCreateEpisodic:
         assert len(memory.embedding) == DIMENSION
 
     def test_update_episodic_clears_embedding(self, db):
-        from app.rag.embedding import _fallback_embedding
+        from _embedding_stub import fake_vector
 
         user_id = _make_user(db, "epi-update")
         memory = create_episodic(
             db, user_id, "原文", event_type="decision",
-            embedding=_fallback_embedding("原文"),
+            embedding=fake_vector("原文"),
         )
         updated = update_content(db, memory.id, user_id, "改了之后")
         assert updated.summary == "改了之后"
@@ -615,19 +758,19 @@ class TestRetrieveMemories:
 
     def test_vector_path_ranks_similar_above_unrelated(self, db):
         """fake embedding 让语义相近的 episodic 行排名靠前。"""
-        from app.rag.embedding import _fallback_embedding
+        from _embedding_stub import fake_vector
 
         user_id = _make_user(db, "retrieve")
         # 同语义（共享相同文本前缀）：应该排第一
         target = create_episodic(
             db, user_id, "python fastapi 框架",
-            embedding=_fallback_embedding("python fastapi 框架"),
+            embedding=fake_vector("python fastapi 框架"),
             importance=0.5,
         )
         # 不同语义：应该排后面
         noise = create_episodic(
             db, user_id, "中午吃了火锅",
-            embedding=_fallback_embedding("中午吃了火锅"),
+            embedding=fake_vector("中午吃了火锅"),
             importance=0.5,
         )
 
@@ -638,12 +781,12 @@ class TestRetrieveMemories:
         assert hits[0].id == target.id
 
     def test_touch_accessed_updates_last_accessed_at(self, db):
-        from app.rag.embedding import _fallback_embedding
+        from _embedding_stub import fake_vector
 
         user_id = _make_user(db, "touch")
         target = create_episodic(
             db, user_id, "我要学的东西",
-            embedding=_fallback_embedding("我要学的东西"),
+            embedding=fake_vector("我要学的东西"),
         )
         assert target.last_accessed_at is None
 
@@ -654,18 +797,42 @@ class TestRetrieveMemories:
         assert refreshed.last_accessed_at is not None
         assert refreshed.last_accessed_at >= before
 
+    def test_mark_accessed_false_skips_touch(self, db):
+        """调用方接下来要 reinforce 时，检索层不应该再写一次库。
+
+        reinforce_memories 自己就会刷 last_accessed_at 并累加 access_count，
+        这里再 touch 一次就是对同一批 id 提交两个事务。
+        """
+        from _embedding_stub import fake_vector
+
+        user_id = _make_user(db, "no-touch")
+        target = create_episodic(
+            db, user_id, "先不要碰我",
+            embedding=fake_vector("先不要碰我"),
+        )
+        assert target.last_accessed_at is None
+
+        hits = retrieve_memories(
+            db, "先不要碰我", user_id, top_k=5, mark_accessed=False
+        )
+
+        assert [hit.id for hit in hits] == [target.id]  # 照样能检索到
+        refreshed = get_by_id(db, target.id, user_id)
+        assert refreshed.last_accessed_at is None  # 但没被标记
+        assert refreshed.access_count == 0
+
     def test_empty_query_returns_empty(self, db):
         user_id = _make_user(db, "empty")
         assert retrieve_memories(db, "", user_id) == []
 
     def test_top_k_caps_results(self, db):
-        from app.rag.embedding import _fallback_embedding
+        from _embedding_stub import fake_vector
 
         user_id = _make_user(db, "topk")
         for i in range(5):
             create_episodic(
                 db, user_id, f"事件 {i}",
-                embedding=_fallback_embedding(f"事件 {i}"),
+                embedding=fake_vector(f"事件 {i}"),
             )
         hits = retrieve_memories(db, "事件", user_id, top_k=2)
         assert len(hits) <= 2

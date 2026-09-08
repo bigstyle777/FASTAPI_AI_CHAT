@@ -10,6 +10,7 @@ from ...core.sse import sse_event
 from ...core.exceptions import BusinessError
 from ...core.stop_signal import StopWatcher, clear_stopped, mark_stopped
 from ...task.memory_queue import enqueue_memory_extraction
+from ...memory.extractor import build_extraction_input
 from .message_context import build_memory_messages
 from ..repository import (
     delete_message,
@@ -98,11 +99,17 @@ async def send_message_service(db, user, request):
         ai_reply,
         parent_id=user_message.id,
     )
+    # 只把"最近几条上下文 + 本轮 user/assistant"交给提取，不把整段历史
+    # 和注入的记忆 system 消息喂回去：episodic 一律 CREATE 不幂等，
+    # 旧历史每轮重提就会堆出大量近似重复的记忆。
+    conversation = build_extraction_input(
+        history_messages, user_text=message, assistant_text=ai_reply
+    )
     await run_blocking(
         enqueue_memory_extraction,
         user["user_id"],
         request.session_id,
-        messages,
+        conversation,
     )
 
     return {"success": True}
@@ -178,19 +185,29 @@ async def stream_ai_reply(
         total_tokens=usage.total_tokens,
         parent_id=parent_id,
     )
-    saved_messages = history_messages if history_messages is not None else messages
+    # 用副本追加 assistant：history_messages 为 None 时 saved_messages 就是
+    # messages 本体，就地 append 会把本轮 assistant 混进下面交给提取的
+    # messages，造成"流式主路径看不到 assistant、改消息路径却看得到"的
+    # 不一致。拷贝之后两条路径行为统一。
+    saved_messages = list(history_messages if history_messages is not None else messages)
     saved_messages.append({"role": "assistant", "content": ai_reply})
     await run_blocking(save_chat_context, session_id, saved_messages)
 
     user_message_text = _last_user_message_text(messages)
     if user_message_text:
-        # 把记忆系统消息和当前用户问题一并交给提取 LLM，
-        # 让它能看见本轮用到的上下文，避免漏掉对话里的隐含意图
+        # 本轮 user + assistant 才是提取对象，前面几条上下文只用于消解
+        # 指代（"就用它吧"指的是什么）；build_extraction_input 会剔除
+        # 注入的记忆 system 消息，避免把已有记忆再提取一遍。
+        conversation = build_extraction_input(
+            messages,
+            user_text=user_message_text,
+            assistant_text=ai_reply,
+        )
         await run_blocking(
             enqueue_memory_extraction,
             user_id,
             session_id,
-            messages,
+            conversation,
         )
     yield sse_event("usage", StreamUsageEvent(usage=usage))
     yield sse_event("done", StreamDoneEvent())

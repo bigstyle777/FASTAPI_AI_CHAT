@@ -17,15 +17,22 @@ def extract_and_save_memory_task(
     user_id: int,
     session_id: int | None,
     conversation: list[dict[str, str]],
+    focus_last: int = 2,
 ):
     """对话结束后跑一次：LLM 提取 → 落库 → 顺手回填之前失败的向量。
 
     整个流程在 Celery worker 上跑，与聊天主链路完全解耦，
     失败也不会让用户看到错误（任务返回值有 applied 数组）。
+
+    conversation 由 memory.extractor.build_extraction_input 组装，最后两条
+    是本轮 user/assistant；focus_last 告诉提取器把这几条单独标成"本轮"，
+    只从这里提取（默认 2）。旧任务消息没这个参数时走默认值，向后兼容。
     """
     db = SessionLocal()
     try:
-        actions = extract_memories_for_user(db, user_id, conversation)
+        actions = extract_memories_for_user(
+            db, user_id, conversation, focus_last=focus_last
+        )
         applied = apply_actions(db, user_id, actions, session_id)
         backfilled = backfill_missing_embeddings(db, user_id)
         return {

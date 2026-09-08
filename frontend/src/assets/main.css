@@ -4098,6 +4098,48 @@ h4 { font-size: 1rem; }
   font-size: 12px;
 }
 
+/* ---- 整理记忆弹窗（合并 / 清理）---- */
+.memory-maintain-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-soft);
+  text-align: left;
+}
+
+.memory-maintain-item + .memory-maintain-item {
+  margin-top: 10px;
+}
+
+.memory-maintain-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.memory-maintain-title {
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.memory-maintain-hint {
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* ghost 按钮默认不是 flex，补上让 loading 圆点和文字对齐 */
+.memory-maintain-item .modal-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .modal-btn.danger-solid {
   display: inline-flex;
   align-items: center;

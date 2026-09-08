@@ -11,13 +11,13 @@ ACTIVE = "active"
 
 # Phase 6：被反复访问（reinforce 累计达阈值）的记忆，比普通 ACTIVE
 # 更"热"。检索把它和 ACTIVE 同等对待，生命周期上只是更晚才考虑退化。
-REINFORCED = "REINFORCED"
+REINFORCED = "reinforced"
 
 # Phase 5：已被 consolidate 吸收进更高层总结。
 # 原文不物理删除（可溯源），但不再是独立检索对象。
-CONSOLIDATED = "CONSOLIDATED"
+CONSOLIDATED = "consolidated"
 
 # Phase 6：进入退化观察 / 已归档。DECAYING 仍可被检索到（给用户
 # 最后一次机会把它救回来），ARCHIVED 不再进入任何检索。
-DECAYING = "DECAYING"
-ARCHIVED = "ARCHIVED"
+DECAYING = "decaying"
+ARCHIVED = "archived"

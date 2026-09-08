@@ -9,6 +9,7 @@ app/memory/reranker.py —— Phase 4 起打分数与召回逻辑分离：
 """
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy.orm import Session
@@ -58,7 +59,10 @@ def _gather_candidates(
     # 前提是各自 value/summary 有向量（无向量的行被 vector_search 过滤）。
     if settings.memory_embedding_enabled:
         try:
-            query_vector = embed_query(query, user_id, db)
+            # allow_fallback=False：拿不到真向量就不要检索。用哈希伪向量算
+            # 出来的"相似度"是噪声，它混进 rerank 后会押低字面命中的真结果，
+            # 不如直接缺席 —— 异常被下面接住，另外两路照常给结果。
+            query_vector = embed_query(query, user_id, db, allow_fallback=False)
             for memory, similarity in vector_search(
                 db, user_id, query_vector, limit_per_source
             ):
@@ -66,7 +70,7 @@ def _gather_candidates(
         except Exception:
             # 向量化不可用（没配 Key / 服务挂了）不能拖垮整个检索，
             # 另外两路照样能给出结果
-            logger.warning("记忆向量检索失败，改用其余两路", exc_info=True)
+            logger.warning("记忆向量检索不可用，改用其余两路", exc_info=True)
 
     # 第 2 路：semantic 的 key / value 文本匹配。
     # 无条件执行 —— semantic 不依赖向量，这是它区别于 episodic 的根本。
@@ -88,12 +92,18 @@ def retrieve_memories(
     user_id: int,
     top_k: int | None = None,
     session_id: int | None = None,
+    *,
+    mark_accessed: bool = True,
 ) -> list[MemoryRead]:
     """检索与 query 最相关的记忆，返回按分数降序的 Top K。
 
     top_k 默认取 settings.memory_top_k。三条路径各取 top_k 的若干倍候选，
     合并排序后再截断 —— 每路只取 top_k 的话，某一路的好结果会被另两路
     挤掉，合并阶段就没得选了。打分细节见 reranker 模块。
+
+    mark_accessed=False 用于"调用方接下来还要 reinforce 这批记忆"的场景：
+    reinforce 本身就会刷 last_accessed_at，再跟一次 touch_accessed 就是对
+    同一批 id 写两次库、提交两次事务（见 chat/services/message_context）。
     """
     if top_k is None:
         top_k = settings.memory_top_k
@@ -107,7 +117,8 @@ def retrieve_memories(
         return []
 
     ranked = rerank(candidates.values(), top_k=top_k)
-    touch_accessed(db, [item.memory.id for item in ranked])
+    if mark_accessed:
+        touch_accessed(db, [item.memory.id for item in ranked])
 
     results: list[MemoryRead] = []
     for item in ranked:
@@ -135,11 +146,24 @@ def _memory_line(memory) -> tuple[str, str] | None:
     return "episodic", f"- {label}{text}"
 
 
-def build_memory_context(
+@dataclass(frozen=True)
+class MemoryContext:
+    """一次记忆注入的结果：文本 + 真正进了文本的那批 id。
+
+    memory_ids 只包含**写进了 text** 的记忆，被字符预算砍掉的不算。
+    reinforce 应该只对这批计数 —— 否则"检索到了但根本没进 prompt"的记忆
+    也会被当成"用上了"，access_count 白涨、提前被提升为 REINFORCED。
+    """
+
+    text: str
+    memory_ids: list[int]
+
+
+def compose_memory_context(
     memories: list[MemoryRead],
     *,
     max_chars: int | None = None,
-) -> str:
+) -> MemoryContext:
     """把检索到的记忆拼成一段可以塞进 system prompt 的文本。
 
     按类型分开写：semantic 是"关于用户的事实"，episodic 是"发生过的事"，
@@ -151,24 +175,25 @@ def build_memory_context(
     极端情况（单条就超预算）也至少保留最高分那条，避免注入为空。
     """
     if not memories:
-        return ""
+        return MemoryContext("", [])
 
     budget = (
         config.MEMORY_CONTEXT_MAX_CHARS if max_chars is None else max_chars
     )
     if budget <= 0:
-        return ""
+        return MemoryContext("", [])
 
     lines: dict[str, list[str]] = {"semantic": [], "episodic": []}
+    picked: dict[str, list[int]] = {"semantic": [], "episodic": []}
     used_chars = 0
-    fallback: tuple[str, str] | None = None  # 预算内放不下任何一条时兜底
+    fallback: tuple[str, str, int] | None = None  # 预算内放不下任何一条时兜底
 
     for memory in memories:
         entry = _memory_line(memory)
         if entry is None:
             continue
         if fallback is None:
-            fallback = entry
+            fallback = (entry[0], entry[1], memory.id)
 
         bucket, line = entry
         # 成本 = 行文本 + 换行；该桶第一条还要付段头；第二个桶出现时
@@ -181,12 +206,14 @@ def build_memory_context(
         if used_chars + cost > budget:
             continue  # 分数更低的直接砍掉
         lines[bucket].append(line)
+        picked[bucket].append(memory.id)
         used_chars += cost
 
     if not lines["semantic"] and not lines["episodic"] and fallback is not None:
         # 预算太小连一条都放不下：保住最高分那条，宁超不空
-        bucket, line = fallback
+        bucket, line, memory_id = fallback
         lines[bucket].append(line)
+        picked[bucket].append(memory_id)
 
     blocks: list[str] = []
     if lines["semantic"]:
@@ -197,4 +224,20 @@ def build_memory_context(
         blocks.append(
             _BUCKET_HEADERS["episodic"] + "\n" + "\n".join(lines["episodic"])
         )
-    return "\n\n".join(blocks)
+    return MemoryContext(
+        text="\n\n".join(blocks),
+        memory_ids=[*picked["semantic"], *picked["episodic"]],
+    )
+
+
+def build_memory_context(
+    memories: list[MemoryRead],
+    *,
+    max_chars: int | None = None,
+) -> str:
+    """compose_memory_context 的薄封装：只要文本、不关心哪几条进了文本时用。
+
+    需要知道"哪些记忆真的被用上了"（例如为了 reinforce）请直接用
+    compose_memory_context 拿 MemoryContext.memory_ids。
+    """
+    return compose_memory_context(memories, max_chars=max_chars).text

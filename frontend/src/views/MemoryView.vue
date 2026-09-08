@@ -2,7 +2,7 @@
 /**
  * 记忆管理页面
  * - 布局与知识库 / 个人中心一致：侧边栏 + 主内容区
- * - 功能：列表 / 新增 / 卡片内原地编辑 / 删除（二次确认）
+ * - 功能：列表 / 新增 / 卡片内原地编辑 / 删除（二次确认）/ 整理（合并、清理）
  * - 交互：骨架屏、按钮 loading、全局 Toast、空状态、错误兜底
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
@@ -10,7 +10,14 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 import { useUiStore } from '@/stores/ui'
-import { createMemory, deleteMemory, fetchMemories, updateMemory } from '@/api/memory'
+import {
+  consolidateMemories,
+  createMemory,
+  decayMemories,
+  deleteMemory,
+  fetchMemories,
+  updateMemory,
+} from '@/api/memory'
 import type { MemoryItem, MemoryType } from '@/types'
 
 const router = useRouter()
@@ -64,6 +71,14 @@ const canSaveEdit = computed(() => editingContent.value.trim().length > 0 && !is
 const deleteOpen = ref(false)
 const deletingTarget = ref<MemoryItem | null>(null)
 const isDeleting = ref(false)
+
+// ===== 整理（合并 / 清理）=====
+// 两个动作在后端都是异步入队（每组合并要调一次 LLM，清扫要扫全量记忆），
+// 所以这里只负责提交并提示，结果靠用户稍后点刷新查看。
+const maintainOpen = ref(false)
+const isConsolidating = ref(false)
+const isDecaying = ref(false)
+const isMaintaining = computed(() => isConsolidating.value || isDecaying.value)
 
 // ===== 工具函数 =====
 function formatTime(value: string | null): string {
@@ -128,8 +143,17 @@ function cancelEdit() {
 }
 
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape' && editingId.value !== null) {
+  if (e.key !== 'Escape') return
+  if (editingId.value !== null) {
     cancelEdit()
+    return
+  }
+  if (maintainOpen.value) {
+    closeMaintain()
+    return
+  }
+  if (deleteOpen.value) {
+    closeDelete()
   }
 }
 
@@ -183,6 +207,43 @@ async function handleDelete() {
     showToast(result.data.message || '记忆已删除')
   }
   isDeleting.value = false
+}
+
+// ===== 整理（合并 / 清理）=====
+function openMaintain() {
+  maintainOpen.value = true
+}
+
+function closeMaintain() {
+  if (!isMaintaining.value) maintainOpen.value = false
+}
+
+async function handleConsolidate() {
+  if (isMaintaining.value) return
+
+  isConsolidating.value = true
+  const result = await consolidateMemories()
+  if (!result.ok || !result.data.success) {
+    showToast(!result.ok ? result.message : '合并任务提交失败，请稍后再试', 'error')
+  } else {
+    showToast(result.data.message || '记忆合并任务已提交')
+    maintainOpen.value = false
+  }
+  isConsolidating.value = false
+}
+
+async function handleDecay() {
+  if (isMaintaining.value) return
+
+  isDecaying.value = true
+  const result = await decayMemories()
+  if (!result.ok || !result.data.success) {
+    showToast(!result.ok ? result.message : '清理任务提交失败，请稍后再试', 'error')
+  } else {
+    showToast(result.data.message || '记忆清理任务已提交')
+    maintainOpen.value = false
+  }
+  isDecaying.value = false
 }
 
 // ===== 侧边栏 =====
@@ -299,6 +360,15 @@ onUnmounted(() => {
             <span class="status-dot"></span>
             共 {{ memories.length }} 条
           </span>
+          <button
+            class="ghost-btn"
+            type="button"
+            title="整理记忆：合并重复事件、归档长期未用的记忆"
+            :disabled="isLoading || isMaintaining"
+            @click="openMaintain"
+          >
+            整理
+          </button>
           <button
             class="ghost-btn"
             type="button"
@@ -500,6 +570,68 @@ onUnmounted(() => {
             <span v-if="isDeleting" class="btn-spinner"></span>
             {{ isDeleting ? '删除中…' : '确认删除' }}
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 整理记忆弹窗：合并重复事件 / 归档长期未用 -->
+    <div v-if="maintainOpen" class="modal-overlay" @click.self="closeMaintain">
+      <div class="modal-card">
+        <h3>整理记忆</h3>
+        <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 14px;">
+          两个动作都在后台异步执行（需要调用模型与扫描全量记忆），
+          提交后稍等片刻再点刷新查看结果。
+        </p>
+
+        <div class="memory-maintain-item">
+          <div class="memory-maintain-text">
+            <div class="memory-maintain-title">合并重复事件</div>
+            <div class="memory-maintain-hint">
+              把近期反复发生的同类事件归纳成一条更高层的总结。
+              原文不会删除，会标为“已合并”并保留溯源。
+            </div>
+          </div>
+          <button
+            class="modal-btn primary"
+            type="button"
+            :disabled="isMaintaining"
+            @click="handleConsolidate"
+          >
+            <span
+              v-if="isConsolidating"
+              class="btn-spinner"
+              style="border-color: rgba(255,255,255,0.35); border-top-color: #fff;"
+            ></span>
+            {{ isConsolidating ? '提交中…' : '合并' }}
+          </button>
+        </div>
+
+        <div class="memory-maintain-item">
+          <div class="memory-maintain-text">
+            <div class="memory-maintain-title">清理长期未用的记忆</div>
+            <div class="memory-maintain-hint">
+              归档已过期的、以及长期没被用到且重要性低的记忆。
+              归档只是不再参与检索与展示，不会物理删除。
+            </div>
+          </div>
+          <button
+            class="modal-btn ghost"
+            type="button"
+            :disabled="isMaintaining"
+            @click="handleDecay"
+          >
+            <span v-if="isDecaying" class="btn-spinner"></span>
+            {{ isDecaying ? '提交中…' : '清理' }}
+          </button>
+        </div>
+
+        <div class="modal-actions">
+          <button
+            class="modal-btn ghost"
+            type="button"
+            :disabled="isMaintaining"
+            @click="closeMaintain"
+          >关闭</button>
         </div>
       </div>
     </div>

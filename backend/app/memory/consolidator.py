@@ -239,9 +239,13 @@ def consolidate_group(
     embedding = None
     if settings.memory_embedding_enabled:
         try:
-            embedding = embed_texts([parsed["summary"]], user_id, db)[0]
+            # allow_fallback=False：宁可让总结先以无向量落库（下轮回填），
+            # 也不要存一个哈希伪向量 —— 它不为 NULL，回填永远不会再看它
+            embedding = embed_texts(
+                [parsed["summary"]], user_id, db, allow_fallback=False
+            )[0]
         except Exception:
-            logger.warning("合并总结向量化失败，暂以无向量落库", exc_info=True)
+            logger.warning("合并总结向量化不可用，暂以无向量落库", exc_info=True)
 
     merged = consolidate_episodes(
         db,

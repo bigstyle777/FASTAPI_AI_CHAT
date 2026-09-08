@@ -3,9 +3,12 @@
 三种"时间"动作，谁也别和谁混：
 - retrieve 命中一条记忆只刷新 last_accessed_at（touch_accessed）——
   那只是"被看到"；
-- reinforce 是"确认被真正用上"（agent 把这条记忆写进了回答），
-  才累加 access_count、上调 confidence、把退化中的记忆拉回来；
+- reinforce 是"确认被真正用上"（这条记忆被拼进了即将喂给模型的 prompt），
+  才累加 access_count、把退化中的记忆拉回来；
 - run_decay 是定期清扫，把长期没用的低价值记忆降级、再归档。
+
+reinforce 刻意不动 confidence："跟当前问题相关"不等于"没记错"，让它自动
+涨分会形成自我强化的回路（详见 config.REINFORCE_ACCESS_THRESHOLD 上的说明）。
 
 状态机（任何状态都不物理删除）：
     ACTIVE ──reinforce 累计达阈值──> REINFORCED
@@ -49,10 +52,15 @@ def reinforce_memories(
 
     对每条"还活着"（非 ARCHIVED/CONSOLIDATED）的记忆：
       - access_count + 1，last_accessed_at 刷新到 now
-      - confidence 上调 REINFORCE_CONFIDENCE_STEP（封顶 1.0）
       - 状态迁移：
           DECAYING  → 先拉回 ACTIVE（"降级拉回"：又被用上了就不该归档）
           access_count 达 REINFORCE_ACCESS_THRESHOLD → 提升为 REINFORCED
+
+    confidence 不在这里改（原因见 config.REINFORCE_ACCESS_THRESHOLD 的注释）。
+
+    调用方如果已经知道这批记忆即将进 prompt，应该让检索层跳过
+    touch_accessed（retrieve_memories(..., mark_accessed=False)），否则会
+    对同一批 id 写两次库 —— 本函数已经把 last_accessed_at 一起刷了。
 
     单事务提交；失败整体回滚（强化是低频操作，不需要部分成功）。
     """
@@ -68,9 +76,6 @@ def reinforce_memories(
     for memory in memories:
         memory.access_count = (memory.access_count or 0) + 1
         memory.last_accessed_at = now
-        memory.confidence = min(
-            1.0, (memory.confidence or 0.9) + config.REINFORCE_CONFIDENCE_STEP
-        )
 
         if memory.status == DECAYING:
             memory.status = ACTIVE  # 降级拉回

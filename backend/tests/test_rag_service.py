@@ -28,7 +28,7 @@ from sqlalchemy import select  # noqa: E402
 import app.rag.service as rag_service  # noqa: E402
 from app.admin.repository import create_role, get_role_by_name  # noqa: E402
 from app.core.config import settings  # noqa: E402
-from app.exceptions import BusinessError  # noqa: E402
+from app.core.exceptions import BusinessError
 from app.rag.crud import create_document  # noqa: E402
 from app.rag.models import RagChunk, RagChunkEmbedding, RagDocument  # noqa: E402
 from app.rag.service import (  # noqa: E402

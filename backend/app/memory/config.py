@@ -142,11 +142,15 @@ DECAY_IMPORTANCE_THRESHOLD: float = 0.5
 # DECAYING 观察窗（天）：进入退化后再等这么久仍无人访问 → 归档。
 DECAY_OBSERVATION_DAYS: int = 30
 
-# 每次 reinforce（确认被真正用上）：
+# reinforce（确认这条记忆真的被拼进了 prompt）只做两件事：
 #   - access_count +1，last_accessed_at 刷新
-#   - confidence 上调一步（语义：用到了 → 更信这条没记错）
-REINFORCE_CONFIDENCE_STEP: float = 0.05
-# access_count 累计达到该值 → 状态提升为 REINFORCED
+#   - 累计到下面这个阈值就把状态提升为 REINFORCED
+#
+# 刻意**不**上调 confidence：confidence 是"这条记忆本身有多可信"，只应该
+# 由提取时的 LLM 判断、以及用户/合并流程的显式修正来改。"被检索到并拼进
+# 上下文"只说明它跟当前问题相关，不构成"它没记错"的证据 —— 让它自动涨分
+# 会形成自我强化：越常被召回 → confidence 越高 → rerank 里越靠前 → 更容易
+# 被召回，一条错的记忆就这样再也翻不了身。
 REINFORCE_ACCESS_THRESHOLD: int = 3
 
 
@@ -158,3 +162,21 @@ REINFORCE_ACCESS_THRESHOLD: int = 3
 # 不能反客为主把对话历史和工具结果挤掉 —— 超预算时按排序从低分往
 # 高分砍，保住最相关的几条。
 MEMORY_CONTEXT_MAX_CHARS: int = 2000
+
+
+# ---------------------------------------------------------------------------
+# 提取输入（Extraction）
+# ---------------------------------------------------------------------------
+
+# 交给提取 LLM 的"此前上下文"最多几条。本轮 user/assistant 不占这个名额，
+# 永远完整保留（见 extractor.build_extraction_input）。
+#
+# 为什么不把整段历史都喂进去：semantic 靠 key upsert 是幂等的，episodic
+# 却一律 CREATE。同一段旧历史每轮都被重新提取一遍，就会不断产出近似重复
+# 的 episodic —— 而合并（Consolidation）是手动触发的，追不上这个增速。
+# 上下文只用来消解本轮里的指代（"就用它吧"指的是什么），几条足够。
+EXTRACTION_CONTEXT_MESSAGES: int = 4
+
+# 分段标题：明确告诉 LLM 哪部分只是参考、哪部分才是要提取的对象。
+EXTRACTION_CONTEXT_HEADER: str = "【此前的上下文，仅供理解指代，不要从中提取记忆】"
+EXTRACTION_FOCUS_HEADER: str = "【本轮对话，只从这里提取记忆】"

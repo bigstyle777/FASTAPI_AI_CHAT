@@ -32,7 +32,7 @@ from app.chat.services.sessions import (
     get_sessions_service,
     update_session_service,
 )
-from app.exceptions import BusinessError
+from app.core.exceptions import BusinessError
 from app.user.repository import create_user
 
 

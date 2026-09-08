@@ -1,5 +1,6 @@
 """Memory 数据访问层：所有 SQL 都收在这里，上层不直接写查询。"""
 
+import re
 from datetime import datetime
 
 from sqlalchemy import delete, func, or_, select
@@ -8,6 +9,21 @@ from sqlalchemy.orm import Session
 from .models import Memory
 from .schemas import MemoryType
 from .status import ACTIVE, ARCHIVED, CONSOLIDATED, DECAYING, REINFORCED
+
+
+# ---------------------------------------------------------------------------
+# 字面匹配用的文本切分（供 keyword_search_semantic 拼 LIKE 条件）
+# ---------------------------------------------------------------------------
+
+# 英文/数字按连续片段切成词
+_LATIN_TOKEN = re.compile(r"[a-z0-9_]+")
+# 汉字按连续片段切：跨空格不能组词（"我 不 喜欢"里"我不"不是词）
+_HAN_RUN = re.compile(r"[\u4e00-\u9fff]+")
+
+# 一条 query 最多切成多少个片段去拼 LIKE。片段越多 SQL 里的 OR 越多，
+# 而召回阶段本来就该求全不求准 —— 20 条足够覆盖正常的提问长度，
+# 再长也只是在尾部截断（顺序是整串 → 英文词 → 汉字 bigram）。
+MAX_LITERAL_TERMS: int = 20
 
 
 # ---------------------------------------------------------------------------
@@ -294,6 +310,41 @@ def vector_search(
     return [(row[0], max(0.0, min(1.0, 1.0 - float(row.distance)))) for row in rows]
 
 
+def _literal_terms(query: str) -> list[str]:
+    """把 query 切成用于字面匹配的小片段：整串 + 英文/数字词 + 汉字 bigram。
+
+    为什么不能只拿整条 query 去 LIKE
+    --------------------------------
+    记忆里存的是 value="FastAPI"，用户问的是"FastAPI 做后端怎么样"。
+    整串不是 value 的子串，但 "fastapi" 是 —— 只比整串的话，用户说得
+    越完整反而越查不到，这条兜底路径等于只对关键词查询有效。
+
+    为什么汉字只取相邻二字组合
+    -------------------------
+    中文没有空格分词，bigram 是让"后端"/"魔法数字"这类词能对上的最小
+    手段。不取单字是因为"的""了""是"几乎命中所有中文记忆，会把这一路
+    变成全表扫描；单个汉字的查询由"整串"那一项兜住。
+
+    顺序：整串 → 英文词 → 汉字 bigram，截断时优先保住前面的。
+    """
+    lowered = (query or "").strip().lower()
+    if not lowered:
+        return []
+
+    terms = [lowered]
+    terms.extend(_LATIN_TOKEN.findall(lowered))
+    for run in _HAN_RUN.findall(lowered):
+        terms.extend(run[index : index + 2] for index in range(len(run) - 1))
+
+    unique: list[str] = []
+    seen: set[str] = set()
+    for term in terms:
+        if term not in seen:
+            seen.add(term)
+            unique.append(term)
+    return unique[:MAX_LITERAL_TERMS]
+
+
 def keyword_search_semantic(
     db: Session,
     user_id: int,
@@ -307,6 +358,10 @@ def keyword_search_semantic(
     **这一条永不依赖 embedding**：向量为 NULL、embedding 服务不可用、
     全局开关 memory_embedding_enabled 关掉时，它仍是 semantic 检索的
     兜底路径。这正是 semantic"默认不强制 embedding"的落点。
+
+    这一路是召回（求全），不是过滤（求准）：命中任意一个片段就入选，
+    具体排第几交给 reranker 打分。宁可多召回几条让排序去筛，也不要在
+    召回阶段就把"用户换了个说法"的记忆漏掉。
     """
     stmt = select(Memory).where(
         Memory.user_id == user_id,
@@ -315,22 +370,28 @@ def keyword_search_semantic(
     )
 
     lowered = query.strip().lower()
-    if lowered:
-        pattern = f"%{lowered}%"
-        stmt = stmt.where(
-            or_(
-                func.lower(Memory.key).like(pattern),
-                func.lower(Memory.value).like(pattern),
+    terms = _literal_terms(lowered)
+    if terms:
+        clauses = []
+        for term in terms:
+            pattern = f"%{term}%"
+            clauses.append(
+                or_(
+                    func.lower(Memory.key).like(pattern),
+                    func.lower(Memory.value).like(pattern),
+                )
             )
-        )
+        stmt = stmt.where(or_(*clauses))
 
     stmt = stmt.order_by(Memory.importance.desc()).limit(limit)
     memories = list(db.execute(stmt).scalars().all())
 
+    term_set = set(terms)
     hits: list[tuple[Memory, bool]] = []
     for memory in memories:
         key = (memory.key or "").lower()
-        exact = bool(lowered) and key == lowered
+        # key 被完整命中 = 整条 query 就是 key，或 query 里有一个片段等于 key
+        exact = bool(lowered) and key in term_set
         hits.append((memory, exact))
     return hits
 

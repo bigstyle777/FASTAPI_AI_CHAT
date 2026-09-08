@@ -5,6 +5,16 @@ Message ≠ Memory
 原始消息不直接进库，也不直接拿去做 embedding。必须先过这一层判断：
 "这条对话里有什么是下次还用得上的？" 判断不出来就返回空的 memories。
 直接把聊天记录 vectorize 存进去，检索回来的只会是一堆闲聊碎片。
+
+只提取本轮
+----------
+输入由 build_extraction_input 组装：最近几条上下文 + 本轮 user/assistant。
+上下文只用来消解指代，渲染时会被标成单独一段（见 build_conversation_text），
+prompt 里明确要求只从"本轮"提取。两个理由：
+- episodic 一律 CREATE 不幂等，整段历史每轮重提就会堆重复条目；
+- 注入的 system 消息里本来就是已有记忆，喂回来会形成"提取自己记忆"
+  的自我强化回路（semantic 被反复 upsert、episodic 被重复建档），
+  所以上下文里的 system 消息一律剔除。
 """
 
 import json
@@ -12,6 +22,7 @@ import logging
 
 from ..core.ai_client import get_client, get_user_ai_settings
 from ..core.config import settings
+from . import config
 from .schemas import ExtractionResult, MemoryAction
 
 logger = logging.getLogger(__name__)
@@ -48,6 +59,11 @@ action 取值：
 - IGNORE：看过但认为不值得记
 
 importance 是"这条对以后有多大用"（0~1），confidence 是"我多大把握没理解错"（0~1）。
+
+输入可能分成两段：标着"此前的上下文"的部分**只用来理解本轮里的指代**
+（比如用户说"就用它吧"到底指什么），不要从里面提取任何记忆 ——
+那些内容在它们自己发生的那一轮已经提取过了，重复提取只会堆出重复条目。
+只从标着"本轮对话"的部分提取。
 
 没有任何值得记的内容时，返回 {"memories": []}。
 只返回 JSON，不要任何解释文字或代码块标记。
@@ -98,21 +114,107 @@ def parse_extraction(raw: str) -> list[MemoryAction]:
     return result.memories
 
 
-def build_conversation_text(messages: list[dict[str, str]]) -> str:
+def build_extraction_input(
+    context_messages: list[dict[str, str]],
+    *,
+    user_text: str,
+    assistant_text: str,
+    max_context: int | None = None,
+) -> list[dict[str, str]]:
+    """组装交给提取 LLM 的对话：最近几条上下文 + 本轮 user/assistant。
+
+    约定：返回列表的**最后两条**永远是本轮（user 在前、assistant 在后），
+    渲染与 Celery 任务都靠这个约定把本轮单独标出来（focus_last=2）。
+
+    从 context_messages 里剔除三类消息：
+      - system：记忆注入 / RAG 上下文，不是对话内容。喂回去会让 LLM
+        把已有记忆当成新信息再提取一遍（自我强化回路）；
+      - 本轮那条 user 与那条 assistant：已经在返回值末尾单独给出，
+        留着会在渲染文本里重复出现（调用方的 history 可能已就地
+        append 过本轮 assistant）。
+
+    assistant_text 为空（例如生成被中断）时不补空的 assistant 轮，
+    只交上下文 + 本轮 user，此时最后一条是 user —— 调用方拿到的
+    focus_last 仍为 2 也无害：渲染只是把最后两条归到"本轮"段。
+    """
+    limit = (
+        config.EXTRACTION_CONTEXT_MESSAGES if max_context is None else max_context
+    )
+    focus_user = (user_text or "").strip()
+    focus_assistant = (assistant_text or "").strip()
+
+    picked: list[dict[str, str]] = []
+    skipped_user = False
+    skipped_assistant = False
+    for item in reversed(context_messages or []):
+        role = item.get("role", "user")
+        content = (item.get("content") or "").strip()
+        if role == "system" or not content:
+            continue
+        if not skipped_user and role == "user" and content == focus_user:
+            skipped_user = True
+            continue
+        if (
+            not skipped_assistant
+            and role == "assistant"
+            and focus_assistant
+            and content == focus_assistant
+        ):
+            skipped_assistant = True
+            continue
+        picked.append({"role": role, "content": content})
+        if limit > 0 and len(picked) >= limit:
+            break
+    picked.reverse()
+
+    focus: list[dict[str, str]] = []
+    if focus_user:
+        focus.append({"role": "user", "content": focus_user})
+    if focus_assistant:
+        focus.append({"role": "assistant", "content": focus_assistant})
+    return [*picked, *focus]
+
+
+def build_conversation_text(
+    messages: list[dict[str, str]],
+    *,
+    focus_last: int = 0,
+) -> str:
     """把对话压成一段给 LLM 看的文本，超长时从尾部截断。
 
     只保留最近的内容：早期的闲聊对"该记住什么"基本没有价值，
     而会话可能很长，全喂进去既费钱又容易超出上下文。
+
+    focus_last > 0 时把最后这么多条单独标成"本轮对话"，前面的标成
+    "此前的上下文"，让 LLM 知道只该从哪一段提取（见 SYSTEM_PROMPT）。
+    默认 0 即不分段，保持旧的渲染行为。
+
+    system 消息一律跳过：它们是注入的记忆 / 检索上下文，不是对话内容。
     """
     lines = []
     for item in messages:
         role = item.get("role", "user")
+        if role == "system":
+            continue
         content = (item.get("content") or "").strip()
         if content:
             speaker = "用户" if role == "user" else "助手"
             lines.append(f"{speaker}：{content}")
 
-    text = "\n".join(lines)
+    if 0 < focus_last < len(lines):
+        split = len(lines) - focus_last
+        text = (
+            config.EXTRACTION_CONTEXT_HEADER
+            + "\n"
+            + "\n".join(lines[:split])
+            + "\n\n"
+            + config.EXTRACTION_FOCUS_HEADER
+            + "\n"
+            + "\n".join(lines[split:])
+        )
+    else:
+        text = "\n".join(lines)
+
     limit = settings.memory_extraction_max_chars
     if len(text) > limit:
         text = text[-limit:]
@@ -123,9 +225,15 @@ def extract_memories(
     client,
     model: str,
     conversation: list[dict[str, str]],
+    *,
+    focus_last: int = 0,
 ) -> list[MemoryAction]:
-    """调一次 LLM 做提取。client / model 由调用方准备好。"""
-    conversation_text = build_conversation_text(conversation)
+    """调一次 LLM 做提取。client / model 由调用方准备好。
+
+    focus_last 透传给 build_conversation_text：由 build_extraction_input
+    组装的输入应传 2（本轮 user + assistant）。
+    """
+    conversation_text = build_conversation_text(conversation, focus_last=focus_last)
     if not conversation_text.strip():
         return []
 
@@ -149,6 +257,8 @@ def extract_memories_for_user(
     db,
     user_id: int,
     conversation: list[dict[str, str]],
+    *,
+    focus_last: int = 0,
 ) -> list[MemoryAction]:
     """按用户的 AI 设置建 client 并提取（Celery 后台任务用这个）。"""
     api_key, provider = get_user_ai_settings(user_id=user_id, db=db)
@@ -159,7 +269,7 @@ def extract_memories_for_user(
 
     client, model = result
     try:
-        return extract_memories(client, model, conversation)
+        return extract_memories(client, model, conversation, focus_last=focus_last)
     except Exception:
         logger.exception("用户 %s 的记忆提取失败", user_id)
         return []

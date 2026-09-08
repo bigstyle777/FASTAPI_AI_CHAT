@@ -3,6 +3,7 @@
 - 连独立测试库 `aichat_test`（可用环境变量 TEST_DATABASE_URL 覆盖），不污染主库。
 - 每个用例结束后 TRUNCATE 所有表，保证用例之间隔离。
 - mock 掉 Redis，让 session/message 服务测试不依赖外部缓存服务。
+- mock 掉 embedding，让向量路测试不依赖外部 API、也不跑在哈希噪声上。
 
 用法（在 backend 目录下运行）：
     ..\\.venv\\Scripts\\python.exe -m pytest tests\\test_session_message_services.py -v
@@ -19,6 +20,12 @@ from sqlalchemy import create_engine, text
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
+
+TESTS_DIR = Path(__file__).resolve().parent
+if str(TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(TESTS_DIR))
+
+import _embedding_stub  # noqa: E402
 
 # 显式导入全部域模型包：模型分散在各域后，Base.metadata 需要
 # 所有模型注册完成才能 create_all / TRUNCATE（跨域 relationship 才可解析）
@@ -145,6 +152,29 @@ def _mock_redis(monkeypatch):
     monkeypatch.setattr(redis_mod, "redis_expire", redis_expire)
 
     return store
+
+
+# ---------------------------------------------------------------------------
+# embedding：所有用例一律走确定性假向量（不访问外部 API）
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def deterministic_embedding(monkeypatch):
+    """把 embed_texts / embed_query 换成有语义结构的假向量。
+
+    为什么是 autouse：CI 里没有 embedding API Key，而记忆模块现在用
+    allow_fallback=False 明确拒绝哈希伪向量（拿不到真向量就抛
+    EmbeddingUnavailable），不 patch 的话所有走向量路的用例都会退化成
+    "没有向量"。统一假装服务可用，检索/排序断言才真的在测排序。
+
+    假向量本身按 token 打点（共享词越多余弦越高），而不是 sha256 噪声，
+    详见 _embedding_stub 的模块 docstring。
+
+    单个用例想自己覆盖（例如 test_rag_service 自带的 fake）照常
+    monkeypatch 即可，后 patch 的生效。
+    """
+    _embedding_stub.install(monkeypatch)
 
 
 # ---------------------------------------------------------------------------
