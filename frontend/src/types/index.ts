@@ -317,6 +317,22 @@ export interface MemoryListResponse {
   memories: MemoryItem[]
 }
 
+/**
+ * 一对语义高度接近的语义记忆（疑似同一个意思被记成了两条，key 不一致）。
+ * keep / drop 只是后端给出的建议（importance 高的优先保留），决定权在用户。
+ */
+export interface MemoryDuplicatePair {
+  similarity: number
+  keep: MemoryItem
+  drop: MemoryItem
+}
+
+export interface DuplicateListResponse {
+  success: boolean
+  threshold: number
+  duplicates: MemoryDuplicatePair[]
+}
+
 export interface MemoryMutationResponse {
   success: boolean
   memory: MemoryItem

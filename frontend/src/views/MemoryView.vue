@@ -15,10 +15,11 @@ import {
   createMemory,
   decayMemories,
   deleteMemory,
+  fetchDuplicates,
   fetchMemories,
   updateMemory,
 } from '@/api/memory'
-import type { MemoryItem, MemoryType } from '@/types'
+import type { MemoryDuplicatePair, MemoryItem, MemoryType } from '@/types'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -102,6 +103,24 @@ async function loadMemories() {
     memories.value = [...result.data.memories].reverse()
   }
   isLoading.value = false
+  // 疑似重复检测是锦上添花：失败就当没有，不挡主流程
+  await loadDuplicates()
+}
+
+// ===== 疑似重复（同一个意思被记成了两条）=====
+// key 由提取时的模型生成，同一个槽位可能被写成两个近义的 key。
+// 后端只挑出可疑对子并给一条保留建议；合并由用户走已有的编辑/删除完成。
+const duplicates = ref<MemoryDuplicatePair[]>([])
+const duplicatesExpanded = ref(true)
+
+async function loadDuplicates() {
+  const result = await fetchDuplicates()
+  duplicates.value = result.ok && result.data.success ? result.data.duplicates : []
+}
+
+/** 选定保留哪条，另一条走既有的删除二次确认（删除不可恢复，不跳过确认） */
+function resolveDuplicate(keep: MemoryItem, drop: MemoryItem) {
+  confirmDelete(drop)
 }
 
 // ===== 新增 =====
@@ -175,6 +194,8 @@ async function saveEdit() {
     if (index >= 0) memories.value[index] = result.data.memory
     cancelEdit()
     showToast('记忆已更新')
+    // 用户可能刚把两条合并成了一条，重新检测一遍
+    await loadDuplicates()
   }
   isSavingEdit.value = false
 }
@@ -205,6 +226,8 @@ async function handleDelete() {
     deleteOpen.value = false
     deletingTarget.value = null
     showToast(result.data.message || '记忆已删除')
+    // 被删的可能是某组"疑似重复"里的一条，重新算一遍
+    await loadDuplicates()
   }
   isDeleting.value = false
 }
@@ -433,6 +456,59 @@ onUnmounted(() => {
             <span v-else>+</span>
             {{ isCreating ? '保存中…' : '保存记忆' }}
           </button>
+        </div>
+      </div>
+
+      <!-- 疑似重复提醒：同一个意思被记成了两条 -->
+      <div
+        v-if="!isLoading && !loadError && duplicates.length > 0"
+        class="duplicate-card"
+      >
+        <button
+          class="duplicate-header"
+          type="button"
+          @click="duplicatesExpanded = !duplicatesExpanded"
+        >
+          <span class="duplicate-title">疑似重复的记忆</span>
+          <span class="duplicate-count">{{ duplicates.length }} 组</span>
+          <span class="duplicate-toggle">{{ duplicatesExpanded ? '收起' : '展开' }}</span>
+        </button>
+
+        <div v-if="duplicatesExpanded">
+          <p class="duplicate-hint">
+            每组两条内容高度相似，可能是同一个意思被记成了两条（例如 key 写成了
+            backend_framework 和 backend_stack）。同时存在会让 AI 在对话里看到
+            自相矛盾的信息。删掉其中一条即可，或先点"编辑"把内容合并再删另一条。
+          </p>
+          <div
+            v-for="(pair, index) in duplicates"
+            :key="`${pair.keep.id}-${pair.drop.id}-${index}`"
+            class="duplicate-pair"
+          >
+            <div class="duplicate-side">
+              <div class="duplicate-side-head">
+                <span class="duplicate-badge keep">建议保留</span>
+                <span class="duplicate-key">{{ pair.keep.key || '（无 key）' }}</span>
+              </div>
+              <p class="duplicate-text">{{ pair.keep.content }}</p>
+            </div>
+            <div class="duplicate-side">
+              <div class="duplicate-side-head">
+                <span class="duplicate-badge drop">
+                  疑似重复 · 相似度 {{ Math.round(pair.similarity * 100) }}%
+                </span>
+                <span class="duplicate-key">{{ pair.drop.key || '（无 key）' }}</span>
+              </div>
+              <p class="duplicate-text">{{ pair.drop.content }}</p>
+              <div class="duplicate-actions">
+                <button
+                  class="memory-action-btn danger"
+                  type="button"
+                  @click="resolveDuplicate(pair.keep, pair.drop)"
+                >保留另一条，删除这条</button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -729,5 +805,119 @@ onUnmounted(() => {
   font-size: 11px;
   color: var(--text-tertiary);
   margin-bottom: 8px;
+}
+
+/* ===== 疑似重复提醒 ===== */
+.duplicate-card {
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border: 1px solid rgba(133, 79, 11, 0.28);
+  border-radius: 12px;
+  background: rgba(234, 243, 222, 0.55);
+}
+
+.duplicate-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.duplicate-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.duplicate-count {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(133, 79, 11, 0.14);
+  color: #854f0b;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.duplicate-toggle {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.duplicate-hint {
+  margin: 10px 0 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.duplicate-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding: 12px;
+  margin-bottom: 10px;
+  border: 1px solid var(--border-tertiary, rgba(0, 0, 0, 0.12));
+  border-radius: 10px;
+  background: var(--bg-secondary, rgba(255, 255, 255, 0.6));
+}
+
+.duplicate-pair:last-child {
+  margin-bottom: 0;
+}
+
+.duplicate-side-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.duplicate-badge {
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.duplicate-badge.keep {
+  background: rgba(99, 153, 34, 0.16);
+  color: #3b6d11;
+}
+
+.duplicate-badge.drop {
+  background: rgba(226, 75, 74, 0.14);
+  color: #a32d2d;
+}
+
+.duplicate-key {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  word-break: break-all;
+}
+
+.duplicate-text {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.duplicate-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 720px) {
+  .duplicate-pair {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

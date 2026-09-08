@@ -5,6 +5,7 @@
 import { request, type ApiResult } from './http'
 import type {
   ActionResponse,
+  DuplicateListResponse,
   MemoryCreateRequest,
   MemoryItem,
   MemoryListResponse,
@@ -102,4 +103,32 @@ export async function consolidateMemories(): Promise<ApiResult<ActionResponse>> 
  */
 export async function decayMemories(): Promise<ApiResult<ActionResponse>> {
   return request<ActionResponse>({ url: '/memories/decay', method: 'POST' })
+}
+
+/**
+ * 找出语义高度接近的语义记忆对（疑似同一个意思被记成了两条）。
+ *
+ * 后端只负责挑出可疑的对子并给一条保留建议，不自动合并 ——
+ * "用 X" 和 "不用 X" 的向量非常接近，含义却相反，机器不替用户拍板。
+ * 合并由用户走已有的编辑 / 删除接口完成。
+ */
+export async function fetchDuplicates(): Promise<ApiResult<DuplicateListResponse>> {
+  const result = await request<{
+    success: boolean
+    threshold: number
+    duplicates: { similarity: number; keep: RawMemoryItem; drop: RawMemoryItem }[]
+  }>({ url: '/memories/duplicates', method: 'GET' })
+  if (!result.ok) return result
+  return {
+    ok: true,
+    data: {
+      success: result.data.success,
+      threshold: result.data.threshold,
+      duplicates: (result.data.duplicates || []).map((pair) => ({
+        similarity: pair.similarity,
+        keep: normalizeMemory(pair.keep),
+        drop: normalizeMemory(pair.drop),
+      })),
+    },
+  }
 }
