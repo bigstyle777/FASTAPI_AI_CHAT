@@ -15,6 +15,17 @@ prompt 里明确要求只从"本轮"提取。两个理由：
 - 注入的 system 消息里本来就是已有记忆，喂回来会形成"提取自己记忆"
   的自我强化回路（semantic 被反复 upsert、episodic 被重复建档），
   所以上下文里的 system 消息一律剔除。
+
+已知记忆不是"上下文"
+--------------------
+上面说的是**别把对话历史喂回去**，但"当前已存了哪些相关记忆"是另一回事，
+必须给 LLM 看：用户说"我不用 FastAPI 了，改 Django"，提取器不知道库里
+存着 backend_framework=FastAPI，就只能产出 IGNORE（"不用了"不是一条新
+事实）—— 那条错记忆就这么一直活着。
+
+所以提取前先检索出若干条最相关的已有记忆，连同 id 一起放进 prompt，
+让 LLM 能产出 UPDATE / ARCHIVE 去改它们。这是"用户推翻自己之前说的话"
+唯一的出口。
 """
 
 import json
@@ -23,9 +34,14 @@ import logging
 from ..core.ai_client import get_client, get_user_ai_settings
 from ..core.config import settings
 from . import config
+from .retriever import retrieve_memories
 from .schemas import ExtractionResult, MemoryAction
 
 logger = logging.getLogger(__name__)
+
+# 渲染"已知记忆"那一段的标题。措辞要压住两件事：别当成要提取的素材，
+# 也别因为"看起来已经有了"就返回 IGNORE —— 值变了就不是一回事。
+KNOWN_MEMORIES_HEADER = "【已知记忆：只用来判断本轮是否推翻了旧说法，不要从中重新提取】"
 
 SYSTEM_PROMPT = """\
 你负责从一段对话里提取值得长期记住的信息。
@@ -64,6 +80,18 @@ importance 是"这条对以后有多大用"（0~1），confidence 是"我多大�
 （比如用户说"就用它吧"到底指什么），不要从里面提取任何记忆 ——
 那些内容在它们自己发生的那一轮已经提取过了，重复提取只会堆出重复条目。
 只从标着"本轮对话"的部分提取。
+
+输入还可能带一段"已知记忆"（每条形如 [id=12] key = value）。
+它**不是**要你重新提取的内容，而是给你判断"本轮有没有推翻旧说法"用的：
+- 本轮明确更正/推翻了其中某条（"我不用 X 了""之前说错了""其实我是…"）
+  → 用 UPDATE 带上那条 [id=] 改正它，或用 ARCHIVE 让它退役；
+  **不要**因为相关信息已经存在就返回 IGNORE —— 值变了就不是一回事；
+- 本轮只是补充了无关的新信息 → 照常用 UPSERT / CREATE，不要去改旧记忆；
+- 拿不准本轮是不是在说同一件事 → 用 UPSERT/CREATE 新增，别冒险改旧的。
+
+UPDATE 只填要改的字段对应的正文（semantic 填 value，episodic 填 summary）
+加 target_id，key 沿用原来的，不要另起一个 key。
+ARCHIVE 只填 target_id，不需要新内容。
 
 没有任何值得记的内容时，返回 {"memories": []}。
 只返回 JSON，不要任何解释文字或代码块标记。
@@ -221,30 +249,94 @@ def build_conversation_text(
     return text
 
 
+def render_known_memories(memories) -> str:
+    """把已有记忆渲染成给 LLM 看的清单，每条带 [id=] 供它指定目标。
+
+    id 必须出现在这里：UPDATE / ARCHIVE 靠它定位到具体那一条。
+    semantic 写成 "key = value"（key 是它的身份），episodic 标成"（事件）"
+    并带上 event_type，帮 LLM 区分"稳定事实"和"发生过的一次事"。
+    """
+    lines: list[str] = []
+    for memory in memories or []:
+        mtype = getattr(getattr(memory, "type", None), "value", None) or str(
+            getattr(memory, "type", "")
+        )
+        if mtype == "semantic":
+            text = f"{memory.key} = {memory.value}"
+        else:
+            tag = f"[{memory.event_type}] " if getattr(memory, "event_type", None) else ""
+            text = f"（事件）{tag}{memory.summary}"
+        lines.append(f"[id={memory.id}] {text}")
+    return "\n".join(lines)
+
+
+def _known_memories_for(
+    db,
+    user_id: int,
+    conversation: list[dict[str, str]],
+    focus_last: int,
+) -> list:
+    """提取前先检索出跟本轮最相关的若干条已有记忆。
+
+    mark_accessed=False 是必须的：这一步是提取器在读库，不是用户真的
+    用到了这些记忆。让检索层 touch 一把会刷新 last_accessed_at，把
+    "被提取器看过"伪装成"被用户用上"，decay 的冷落判断就失准了。
+
+    检索失败（没配向量 / DB 抖）不能拖垮提取 —— 退化成"看不到已知记忆"
+    只是少了 UPDATE/ARCHIVE 的能力，新增类动作照常工作。
+    """
+    focus = conversation[-focus_last:] if focus_last > 0 else conversation
+    query = " ".join(
+        (item.get("content") or "").strip()
+        for item in focus or []
+        if item.get("role") != "system"
+    ).strip()
+    if not query:
+        return []
+
+    try:
+        return retrieve_memories(
+            db,
+            query,
+            user_id,
+            top_k=config.EXTRACTION_KNOWN_MEMORIES,
+            mark_accessed=False,
+        )
+    except Exception:
+        logger.warning("提取前检索已知记忆失败，本轮不展示已知记忆", exc_info=True)
+        return []
+
+
 def extract_memories(
     client,
     model: str,
     conversation: list[dict[str, str]],
     *,
     focus_last: int = 0,
+    known_memories=None,
 ) -> list[MemoryAction]:
     """调一次 LLM 做提取。client / model 由调用方准备好。
 
     focus_last 透传给 build_conversation_text：由 build_extraction_input
     组装的输入应传 2（本轮 user + assistant）。
+
+    known_memories 是检索出来的已有记忆（带 id），渲染成单独一段附在
+    对话后面。没有它，LLM 只能"新增"或"什么都不做"，改不掉旧记忆。
     """
     conversation_text = build_conversation_text(conversation, focus_last=focus_last)
     if not conversation_text.strip():
         return []
 
+    known_text = render_known_memories(known_memories)
+    user_content = f"请从下面这段对话中提取记忆：\n\n{conversation_text}"
+    if known_text:
+        user_content += f"\n\n{KNOWN_MEMORIES_HEADER}\n{known_text}"
+
     response = client.chat.completions.create(
         model=model,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": f"请从下面这段对话中提取记忆：\n\n{conversation_text}",
-            },
+            {"role": "user", "content": user_content},
         ],
         max_tokens=800,
     )
@@ -259,8 +351,13 @@ def extract_memories_for_user(
     conversation: list[dict[str, str]],
     *,
     focus_last: int = 0,
+    with_known_memories: bool = True,
 ) -> list[MemoryAction]:
-    """按用户的 AI 设置建 client 并提取（Celery 后台任务用这个）。"""
+    """按用户的 AI 设置建 client 并提取（Celery 后台任务用这个）。
+
+    with_known_memories 关掉就退回"看不到已有记忆"的旧行为，只做新增 ——
+    单测和不需要 UPDATE/ARCHIVE 的场合用。
+    """
     api_key, provider = get_user_ai_settings(user_id=user_id, db=db)
     result = get_client(api_key=api_key, provider=provider)
     if not result:
@@ -268,8 +365,15 @@ def extract_memories_for_user(
         return []
 
     client, model = result
+    known = (
+        _known_memories_for(db, user_id, conversation, focus_last)
+        if with_known_memories
+        else []
+    )
     try:
-        return extract_memories(client, model, conversation, focus_last=focus_last)
+        return extract_memories(
+            client, model, conversation, focus_last=focus_last, known_memories=known
+        )
     except Exception:
         logger.exception("用户 %s 的记忆提取失败", user_id)
         return []

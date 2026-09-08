@@ -12,11 +12,23 @@ reinforce 刻意不动 confidence："跟当前问题相关"不等于"没记错"�
 
 状态机（任何状态都不物理删除）：
     ACTIVE ──reinforce 累计达阈值──> REINFORCED
-    ACTIVE / REINFORCED ──长期未访问且低 importance──> DECAYING
+    ACTIVE ──长期未访问且低 importance──> DECAYING
     DECAYING ──观察窗内被 reinforce──> 拉回 ACTIVE（降级拉回）
     DECAYING ──观察窗过仍无人访问──> ARCHIVED
     任意状态 ──expires_at 到期──> ARCHIVED
     检索默认排除 ARCHIVED 与 CONSOLIDATED（见 repository 的过滤）
+
+REINFORCED 换来的不是"排得更前"，而是"免于被冷落降级"
+------------------------------------------------------
+强化信号刻意不进排序：access_count 只说明这条"跟当前问题相关"，不说明
+它没记错；让它加分就是"越常被召回 → 分越高 → 更容易被召回"的自我强化
+回路，一条错的记忆会再也翻不了身。而且 reinforce 已经顺带刷新了
+last_accessed_at，recency 因子早就涵盖了"最近常用"这层意思，再加一次
+是重复计分。
+
+所以 REINFORCED 只影响**留存**：它被排除在冷落降级之外（见 repository
+的 list_stale_memories），别的一概不变。"被反复用上过"是"不该被清理"
+的证据，不是"该排第一"的证据。
 
 与 Consolidation 一样不注册定时器：run_decay 由 Celery 手动任务
 触发（见 task/memory_*）。归档是"不再返回"，不是"删除"，随时可以
@@ -121,15 +133,16 @@ def run_decay(
         memory.updated_at = now
         expired_count += 1
 
-    # 2) 冷落降级：只碰仍 ACTIVE/REINFORCED 的（python 状态可能已被第 1 段
-    #    改成 ARCHIVED，靠守卫跳过，避免把"该归档"的又拉去降级）
+    # 2) 冷落降级：list_stale_memories 只挑 ACTIVE（REINFORCED 免于冷落
+    #    降级），这里再守一道是因为 python 状态可能已被第 1 段改成
+    #    ARCHIVED，避免把"该归档"的又拉去降级。
     for memory in list_stale_memories(
         db,
         user_id,
         older_than=stale_before,
         max_importance=config.DECAY_IMPORTANCE_THRESHOLD,
     ):
-        if memory.status not in (ACTIVE, REINFORCED):
+        if memory.status != ACTIVE:
             continue
         memory.status = DECAYING
         memory.updated_at = now  # 观察窗起点 = 进入 DECAYING 的时刻

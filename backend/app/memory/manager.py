@@ -16,12 +16,14 @@ from sqlalchemy.orm import Session
 from ..core.config import settings
 from ..rag.embedding import embed_texts
 from .repository import (
+    archive_memory,
     create_episodic,
     list_missing_embedding,
     set_embedding,
+    update_from_extraction,
     upsert_semantic,
 )
-from .schemas import MemoryAction, MemoryRead, MemoryType
+from .schemas import MemoryAction, MemoryActionType, MemoryRead, MemoryType
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +55,13 @@ def apply_actions(
 
     episodic 的向量在这里算：本函数主要由 Celery 后台任务调用，
     不在用户等响应的关键路径上，多一次 embedding 请求可以接受。
+
+    两类动作，别混：
+      - 新增（UPSERT / CREATE）：不知道已有记忆长什么样，按 key 覆盖或
+        直接新建；
+      - 改已有（UPDATE / ARCHIVE）：带 target_id，落到指定那条上。
+        这是"用户推翻了自己之前说的话"的出口 —— 没有它，记错的记忆
+        只能靠用户手动去记忆页删。
     """
     applied: list[MemoryRead] = []
 
@@ -60,7 +69,24 @@ def apply_actions(
         if not action.is_usable():
             continue
 
-        if action.type == MemoryType.SEMANTIC:
+        if action.action == MemoryActionType.ARCHIVE:
+            memory = archive_memory(db, user_id, action.target_id)
+        elif action.action == MemoryActionType.UPDATE:
+            content = (
+                action.value
+                if action.type == MemoryType.SEMANTIC
+                else action.summary
+            )
+            memory = update_from_extraction(
+                db,
+                user_id,
+                action.target_id,
+                content=content,
+                importance=action.importance,
+                confidence=action.confidence,
+                embedding=_embed_text(db, user_id, content),
+            )
+        elif action.type == MemoryType.SEMANTIC:
             memory = upsert_semantic(
                 db,
                 user_id,
@@ -84,7 +110,10 @@ def apply_actions(
                 embedding=_embed_text(db, user_id, action.summary),
             )
 
-        applied.append(MemoryRead.model_validate(memory))
+        # UPDATE / ARCHIVE 指向的 id 可能不存在（LLM 编的、或已被删），
+        # 此时 repository 返回 None，跳过即可 —— 不影响其它动作。
+        if memory is not None:
+            applied.append(MemoryRead.model_validate(memory))
 
     return applied
 

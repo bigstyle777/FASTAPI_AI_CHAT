@@ -246,6 +246,85 @@ def update_content(
     return memory
 
 
+def update_from_extraction(
+    db: Session,
+    user_id: int,
+    memory_id: int,
+    *,
+    content: str,
+    importance: float | None = None,
+    confidence: float | None = None,
+    embedding: list[float] | None = None,
+) -> Memory | None:
+    """LLM 判定"这条记错了或过时了"时，按 id 改正一条已有记忆。
+
+    与 update_content（用户在记忆页手动改正文）的区别：
+      - 这里还要改 importance / confidence —— LLM 更正一条记忆时，
+        它对这条的把握程度也变了；
+      - embedding 由调用方算好传进来（本函数在 Celery 后台跑，
+        可以承受多一次 embedding 请求），传 None 表示"没算出来"，
+        那就清空等回填，绝不留下代表旧正文的旧向量。
+
+    (memory_id, user_id) 双重匹配：LLM 给的 id 可能编错，取不到就返回
+    None 让调用方跳过，绝不改到别人的记忆。
+    """
+    memory = get_by_id(db, memory_id, user_id)
+    if memory is None:
+        return None
+
+    if memory.type == MemoryType.SEMANTIC.value:
+        memory.value = content
+    else:
+        memory.summary = content
+
+    if importance is not None:
+        memory.importance = importance
+    if confidence is not None:
+        memory.confidence = confidence
+    # 正文变了，旧向量就不再代表这条记忆
+    memory.embedding = embedding
+
+    memory.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(memory)
+    return memory
+
+
+def archive_memory(
+    db: Session,
+    user_id: int,
+    memory_id: int,
+    *,
+    reason: str = "",
+) -> Memory | None:
+    """让一条记忆退役：标 ARCHIVED，不物理删除。
+
+    为什么不是删除：这个动作由 LLM 的判断触发，而 LLM 会判断错。
+    归档后检索默认排除它（见各查询的 status 过滤），用户想找回来时在
+    记忆页还能看到。要真删除由用户在记忆页点 —— 那是人的明确意图。
+
+    重复归档是幂等的：已经是 ARCHIVED 就直接返回，不刷新 updated_at，
+    免得把"观察窗起点"之类的语义搞乱。
+    """
+    memory = get_by_id(db, memory_id, user_id)
+    if memory is None:
+        return None
+    if memory.status == ARCHIVED:
+        return memory
+
+    previous_status = memory.status
+    memory.status = ARCHIVED
+    memory.updated_at = datetime.utcnow()
+    memory.metadata_ = {
+        **(memory.metadata_ or {}),
+        "archived_reason": reason or "superseded_by_conversation",
+        "archived_from_status": previous_status,
+    }
+    db.commit()
+    db.refresh(memory)
+    return memory
+
+
 def delete_memory(db: Session, memory_id: int, user_id: int) -> bool:
     memory = get_by_id(db, memory_id, user_id)
     if memory is None:
@@ -540,10 +619,17 @@ def list_stale_memories(
     max_importance: float,
     limit: int = 1000,
 ) -> list[Memory]:
-    """找出"该进退化观察"的记忆：ACTIVE/REINFORCED、importance 不高于
-    阈值、且很久没被访问（anchor = 最近访问时间，没访问过则用创建时间）。
+    """找出"该进退化观察"的记忆：仍是 ACTIVE、importance 不高于阈值、
+    且很久没被访问（anchor = 最近访问时间，没访问过则用创建时间）。
 
-    只挑低重要性的 —— 用户核心目标类的高重要性记忆不该因冷落被降级。
+    两道过滤，各自挡掉一类误伤：
+      - 只看 ACTIVE：**REINFORCED 不参与冷落降级**。用户反复用上过的记忆
+        是"冷落"这个判断的反例 —— 它明明被用过好几次，只因为最近 90 天
+        没提就降级，等于把"用户确实需要"的证据扔掉。REINFORCED 想退出
+        只能靠用户手动归档，或被更新的记忆顶掉。
+      - importance 不高于阈值：用户核心目标类的高重要性记忆不该因冷落
+        被降级。
+
     按冷落程度升序（最久没用的先处理）。
     """
     anchor = func.coalesce(Memory.last_accessed_at, Memory.created_at)
@@ -551,7 +637,7 @@ def list_stale_memories(
         select(Memory)
         .where(
             Memory.user_id == user_id,
-            Memory.status.in_((ACTIVE, REINFORCED)),
+            Memory.status == ACTIVE,
             Memory.importance <= max_importance,
             anchor < older_than,
         )

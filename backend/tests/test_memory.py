@@ -45,6 +45,7 @@ from app.memory.extractor import (  # noqa: E402
     build_conversation_text,
     build_extraction_input,
     parse_extraction,
+    render_known_memories,
 )
 from app.memory.manager import apply_actions  # noqa: E402
 from app.memory.models import Memory  # noqa: E402
@@ -75,6 +76,7 @@ from app.memory.schemas import (  # noqa: E402
     MemoryRead,
     MemoryType,
 )
+from app.memory.status import ACTIVE, ARCHIVED  # noqa: E402
 from app.user.repository import create_user  # noqa: E402
 
 DIMENSION = settings.rag_embedding_dimension
@@ -862,3 +864,268 @@ class TestApplyActions:
             MemoryAction(action=MemoryActionType.UPSERT, type=MemoryType.SEMANTIC, key="k"),
         ]
         assert apply_actions(db, user_id, actions) == []
+
+
+# ===========================================================================
+# 更正已有记忆（UPDATE / ARCHIVE）—— 用户推翻自己之前说法的唯一出口
+# ===========================================================================
+
+
+class TestCorrectionActions:
+    """没有这两个动作，提取器对"我不用 X 了"只能回 IGNORE，错记忆永远删不掉。"""
+
+    def test_parse_update_and_archive(self):
+        raw = (
+            '{"memories":[{"action":"UPDATE","type":"semantic","target_id":12,'
+            '"value":"改用 Django"},'
+            '{"action":"ARCHIVE","type":"episodic","target_id":15}]}'
+        )
+        actions = parse_extraction(raw)
+        assert [a.action for a in actions] == [
+            MemoryActionType.UPDATE,
+            MemoryActionType.ARCHIVE,
+        ]
+        assert actions[0].target_id == 12
+        assert actions[1].target_id == 15
+
+    def test_archive_needs_only_target_id(self):
+        """"这条不对了"本身就是完整意图，不该再要一份新正文。"""
+        action = MemoryAction(
+            action=MemoryActionType.ARCHIVE, type=MemoryType.SEMANTIC, target_id=7
+        )
+        assert action.is_usable() is True
+
+    def test_update_without_target_id_is_unusable(self):
+        """LLM 没指定改哪条 —— 宁可跳过，也不能当成新建。"""
+        action = MemoryAction(
+            action=MemoryActionType.UPDATE, type=MemoryType.SEMANTIC, value="Django"
+        )
+        assert action.is_usable() is False
+
+    def test_archive_without_target_id_is_unusable(self):
+        action = MemoryAction(action=MemoryActionType.ARCHIVE, type=MemoryType.EPISODIC)
+        assert action.is_usable() is False
+
+    def test_update_semantic_does_not_need_new_key(self):
+        """key 沿用原来的，所以只要求有新 value。"""
+        action = MemoryAction(
+            action=MemoryActionType.UPDATE, type=MemoryType.SEMANTIC,
+            target_id=3, value="Django",
+        )
+        assert action.is_usable() is True
+
+    def test_upsert_still_requires_key(self):
+        """新增动作没 key 就没法 upsert，这条约束不能因为加了 UPDATE 而松掉。"""
+        action = MemoryAction(
+            action=MemoryActionType.UPSERT, type=MemoryType.SEMANTIC, value="Django"
+        )
+        assert action.is_usable() is False
+
+
+class TestRenderKnownMemories:
+    def test_renders_id_for_targeting(self):
+        memories = [
+            MemoryRead(
+                id=12, user_id=1, type=MemoryType.SEMANTIC,
+                key="backend_framework", value="FastAPI",
+            ),
+            MemoryRead(
+                id=15, user_id=1, type=MemoryType.EPISODIC,
+                summary="决定用 pgvector", event_type="decision",
+            ),
+        ]
+        text = render_known_memories(memories)
+        assert "[id=12] backend_framework = FastAPI" in text
+        assert "[id=15]" in text and "pgvector" in text
+
+    def test_empty_renders_empty(self):
+        assert render_known_memories([]) == ""
+        assert render_known_memories(None) == ""
+
+
+class TestApplyCorrections:
+    """落库侧：改已有记忆，且不能改到别人的。"""
+
+    def test_update_changes_existing_memory_in_place(self, db):
+        user_id = _make_user(db, "corr-update")
+        original = upsert_semantic(
+            db, user_id, "backend_framework", "FastAPI", importance=0.6
+        )
+
+        applied = apply_actions(db, user_id, [
+            MemoryAction(
+                action=MemoryActionType.UPDATE,
+                type=MemoryType.SEMANTIC,
+                target_id=original.id,
+                value="改用 Django",
+                importance=0.9,
+                confidence=0.95,
+            )
+        ])
+
+        assert len(applied) == 1
+        # 改的是同一条，不是新建一条 —— 否则库里会同时存在 FastAPI 和 Django
+        all_rows = db.execute(
+            select(Memory).where(Memory.user_id == user_id)
+        ).scalars().all()
+        assert len(all_rows) == 1
+        assert all_rows[0].id == original.id
+        assert all_rows[0].value == "改用 Django"
+        assert all_rows[0].importance == 0.9
+        # key 沿用，不另起一个
+        assert all_rows[0].key == "backend_framework"
+
+    def test_archive_retires_without_deleting(self, db):
+        user_id = _make_user(db, "corr-archive")
+        memory = upsert_semantic(db, user_id, "old_job", "在字节工作")
+
+        applied = apply_actions(db, user_id, [
+            MemoryAction(
+                action=MemoryActionType.ARCHIVE,
+                type=MemoryType.SEMANTIC,
+                target_id=memory.id,
+            )
+        ])
+
+        assert len(applied) == 1
+        row = get_by_id(db, memory.id, user_id)
+        # 归档 ≠ 删除：LLM 判断可能出错，留一条能找回的路
+        assert row is not None
+        assert row.status == ARCHIVED
+        # 检索默认排除已归档的
+        assert retrieve_memories(db, "字节", user_id) == []
+
+    def test_archive_is_idempotent(self, db):
+        user_id = _make_user(db, "corr-archive-twice")
+        memory = upsert_semantic(db, user_id, "k", "v")
+        action = MemoryAction(
+            action=MemoryActionType.ARCHIVE,
+            type=MemoryType.SEMANTIC,
+            target_id=memory.id,
+        )
+        apply_actions(db, user_id, [action])
+        first = get_by_id(db, memory.id, user_id).updated_at
+        apply_actions(db, user_id, [action])
+        second = get_by_id(db, memory.id, user_id)
+        assert second.status == ARCHIVED
+        assert second.updated_at == first  # 重复归档不该刷新时间戳
+
+    def test_cannot_touch_another_users_memory(self, db):
+        """LLM 给的 target_id 可能编错 —— 取不到就跳过，绝不能改到别人的。"""
+        owner = _make_user(db, "corr-owner")
+        attacker = _make_user(db, "corr-attacker")
+        victim = upsert_semantic(db, owner, "secret", "原本的内容")
+
+        applied = apply_actions(db, attacker, [
+            MemoryAction(
+                action=MemoryActionType.UPDATE,
+                type=MemoryType.SEMANTIC,
+                target_id=victim.id,
+                value="被改坏了",
+            ),
+            MemoryAction(
+                action=MemoryActionType.ARCHIVE,
+                type=MemoryType.SEMANTIC,
+                target_id=victim.id,
+            ),
+        ])
+
+        assert applied == []
+        untouched = get_by_id(db, victim.id, owner)
+        assert untouched.value == "原本的内容"
+        assert untouched.status == ACTIVE
+
+    def test_missing_target_is_skipped_not_crashed(self, db):
+        """指向一条已被删掉的记忆：跳过它，同批其它动作照常执行。"""
+        user_id = _make_user(db, "corr-missing")
+        applied = apply_actions(db, user_id, [
+            MemoryAction(
+                action=MemoryActionType.ARCHIVE,
+                type=MemoryType.SEMANTIC,
+                target_id=999999,
+            ),
+            MemoryAction(
+                action=MemoryActionType.UPSERT,
+                type=MemoryType.SEMANTIC,
+                key="ok", value="这条该成功",
+            ),
+        ])
+        assert len(applied) == 1
+        assert applied[0].key == "ok"
+
+
+class TestExtractionSeesKnownMemories:
+    """端到端：提取时库里已有的记忆必须出现在提示词里，否则改不动它。"""
+
+    @staticmethod
+    def _capture_llm(sink):
+        from types import SimpleNamespace
+
+        class _CapturingLLM:
+            def create(self, **kwargs):
+                sink["messages"] = kwargs["messages"]
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(content='{"memories":[]}')
+                        )
+                    ]
+                )
+
+        class _Client:
+            def __init__(self):
+                self.chat = SimpleNamespace(completions=_CapturingLLM())
+
+        return _Client()
+
+    def test_prompt_contains_known_memory_ids(self, db, monkeypatch):
+        import app.memory.extractor as extractor_mod
+
+        user_id = _make_user(db, "known-prompt")
+        memory = upsert_semantic(
+            db, user_id, "backend_framework", "FastAPI", importance=0.8
+        )
+
+        sink: dict = {}
+        monkeypatch.setattr(
+            extractor_mod,
+            "get_client",
+            lambda **kwargs: (self._capture_llm(sink), "test-model"),
+        )
+
+        extractor_mod.extract_memories_for_user(
+            db,
+            user_id,
+            [{"role": "user", "content": "我不用 FastAPI 了，改用 Django"}],
+        )
+
+        content = sink["messages"][-1]["content"]
+        # id 必须出现：UPDATE / ARCHIVE 全靠它定位到具体那一条
+        assert f"[id={memory.id}]" in content
+        assert "backend_framework = FastAPI" in content
+        # 已知记忆要标成"不要从中重新提取"，否则会触发自我强化
+        assert "不要从中重新提取" in content
+
+    def test_extraction_does_not_count_as_usage(self, db, monkeypatch):
+        """提取器读库 ≠ 用户用到了 —— 不能刷新 last_accessed_at。
+
+        刷了的话 decay 的"冷落 90 天"判断就失准：一条从没被用户用过的
+        记忆，会因为提取器每轮都看它一眼而永远显得"刚被用过"。
+        """
+        import app.memory.extractor as extractor_mod
+
+        user_id = _make_user(db, "known-no-touch")
+        memory = upsert_semantic(db, user_id, "lang", "用 Python 写后端")
+
+        sink: dict = {}
+        monkeypatch.setattr(
+            extractor_mod,
+            "get_client",
+            lambda **kwargs: (self._capture_llm(sink), "test-model"),
+        )
+
+        extractor_mod.extract_memories_for_user(
+            db, user_id, [{"role": "user", "content": "Python 后端怎么写"}]
+        )
+
+        assert get_by_id(db, memory.id, user_id).last_accessed_at is None

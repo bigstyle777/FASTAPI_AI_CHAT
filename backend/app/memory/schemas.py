@@ -16,20 +16,36 @@ class MemoryType(str, Enum):
 class MemoryActionType(str, Enum):
     """提取结果里的动作。
 
-    本次只实现 CREATE / UPSERT；IGNORE 表示 LLM 看过但认为不值得记，
-    apply() 遇到就跳过。UPDATE / DELETE 留到后续 Phase。
+    - CREATE / UPSERT：新增。semantic 一律 UPSERT（按 key 覆盖），
+      episodic 一律 CREATE（事件不幂等）。
+    - UPDATE / ARCHIVE：**改已有的**，靠 target_id 指定是哪一条。
+      这两个动作是"用户推翻了自己之前说的话"的唯一出口 —— 没有它们，
+      提取器只能选择"不记新的"，旧的那条错记忆会一直活着。
+      ARCHIVE 只是标退役（不物理删除），与记忆页的手动删除区分开：
+      LLM 的判断可能出错，留一条可逆的路。
+    - IGNORE：LLM 看过但认为不值得记，apply() 遇到就跳过。
     """
 
     CREATE = "CREATE"
     UPSERT = "UPSERT"
+    UPDATE = "UPDATE"
+    ARCHIVE = "ARCHIVE"
     IGNORE = "IGNORE"
 
 
 class MemoryAction(BaseModel):
-    """LLM 从一轮对话里提取出的一条记忆变更意图。"""
+    """LLM 从一轮对话里提取出的一条记忆变更意图。
+
+    target_id 只在 UPDATE / ARCHIVE 时有意义：它来自提取时一并展示给
+    LLM 的"已知记忆"列表里的 id。LLM 不能凭空编 id —— 但它可能编，
+    所以落库侧一律用 (memory_id, user_id) 双重匹配去取那条记忆，取不到
+    就跳过，不信任 LLM 给的 id。
+    """
 
     action: MemoryActionType
     type: MemoryType
+    # UPDATE / ARCHIVE 用：指向一条已有记忆
+    target_id: int | None = None
     # semantic 用
     key: str | None = None
     value: str | None = None
@@ -55,10 +71,26 @@ class MemoryAction(BaseModel):
         return max(0.0, min(1.0, number))
 
     def is_usable(self) -> bool:
-        """这条意图能不能落库：IGNORE 不要，字段不全的也不要。"""
+        """这条意图能不能落库：IGNORE 不要，字段不全的也不要。
+
+        ARCHIVE 只需要指名道姓（target_id），不需要新内容 ——
+        "这条不对了"本身就是完整意图，没有"改成什么"可说。
+        """
         if self.action == MemoryActionType.IGNORE:
             return False
+        if self.action in (MemoryActionType.UPDATE, MemoryActionType.ARCHIVE):
+            if self.target_id is None:
+                return False
+            # ARCHIVE 只需要指名道姓："这条不对了"本身就是完整意图，
+            # 没有"改成什么"可说；UPDATE 才需要新正文。
+            if self.action == MemoryActionType.ARCHIVE:
+                return True
+
+        # 新增类动作：semantic 必须有 key（它是 upsert 的锚点），
+        # episodic 只要有 summary。UPDATE 走到这里时 key 可以沿用旧的。
         if self.type == MemoryType.SEMANTIC:
+            if self.action == MemoryActionType.UPDATE:
+                return bool(self.value)
             return bool(self.key and self.value)
         return bool(self.summary)
 

@@ -243,3 +243,41 @@ class TestRetrievalExclusion:
 
         assert get_by_key(db, user_id, "active_key") is not None
         assert get_by_key(db, user_id, "archived_key") is None
+
+
+class TestReinforcedIsRetentionSignal:
+    """REINFORCED 换的是"不被冷落清理"，不是"排得更前"。
+
+    排序里加 access_count 会形成"越常被召回 → 分越高 → 更容易被召回"
+    的自我强化回路（见 decay 模块的状态机说明），而且 reinforce 已经顺带
+    刷新了 last_accessed_at，recency 因子本就涵盖"最近常用"。所以强化
+    只在留存这一侧生效：被反复用上过的记忆，不该因为最近没提就被降级。
+    """
+
+    def test_reinforced_survives_coldness(self, db, user_id):
+        memory = upsert_semantic(
+            db, user_id, "often_used", "反复被用到的偏好", importance=0.3
+        )
+        for _ in range(memory_config.REINFORCE_ACCESS_THRESHOLD):
+            reinforce_memories(db, user_id, [memory.id])
+        assert get_by_id(db, memory.id, user_id).status == REINFORCED
+
+        _backdate(db, memory, days=200)
+        result = run_decay(db, user_id)
+
+        assert result["decayed"] == 0
+        assert get_by_id(db, memory.id, user_id).status == REINFORCED
+
+    def test_same_memory_without_reinforcement_gets_decayed(self, db, user_id):
+        """对照组：一模一样的记忆，没被强化过就该降级。
+
+        没有这条对照，"REINFORCED 不降级"可能只是因为查询整体失效了。
+        """
+        memory = upsert_semantic(
+            db, user_id, "barely_used", "几乎没被用到的偏好", importance=0.3
+        )
+        _backdate(db, memory, days=200)
+        result = run_decay(db, user_id)
+
+        assert result["decayed"] == 1
+        assert get_by_id(db, memory.id, user_id).status == DECAYING

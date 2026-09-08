@@ -133,8 +133,9 @@ CONSOLIDATION_MAX_GROUPS: int = 5
 # 生命周期（Decay / Reinforcement / Archive，Phase 6）
 # ---------------------------------------------------------------------------
 
-# 一条 ACTIVE/REINFORCED 记忆连续这么多天没被访问、且 importance 低于
-# 阈值，进入退化观察（DECAYING）。
+# 一条 ACTIVE 记忆连续这么多天没被访问、且 importance 低于阈值，
+# 进入退化观察（DECAYING）。REINFORCED 的不在此列 —— 它被反复用上过，
+# 是"冷落"这个判断的反例（见 decay 模块的状态机说明）。
 DECAY_NO_ACCESS_DAYS: int = 90
 # importance 低于该值的 ACTIVE 记忆才可能被标记退化 —— 高重要性记忆
 # （用户核心目标）即使长期没用到也不该自动降级。
@@ -180,3 +181,13 @@ EXTRACTION_CONTEXT_MESSAGES: int = 4
 # 分段标题：明确告诉 LLM 哪部分只是参考、哪部分才是要提取的对象。
 EXTRACTION_CONTEXT_HEADER: str = "【此前的上下文，仅供理解指代，不要从中提取记忆】"
 EXTRACTION_FOCUS_HEADER: str = "【本轮对话，只从这里提取记忆】"
+
+# 提取前检索多少条已有记忆展示给 LLM，供它判断"本轮有没有推翻旧说法"。
+#
+# 太少的覆盖面不够：用户更正的那条可能不在列表里，LLM 就只能干瞪眼；
+# 太多则既撑 prompt 又容易让它把无关的旧记忆也改一遍。8 条是"能覆盖到
+# 被更正的那条"和"别让它乱动"之间的折中。
+#
+# 注意这一步用的检索是 mark_accessed=False：提取器在读库不等于用户用到
+# 了这些记忆，不能刷新 last_accessed_at（见 extractor._known_memories_for）。
+EXTRACTION_KNOWN_MEMORIES: int = 8
