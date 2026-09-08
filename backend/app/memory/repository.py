@@ -4,7 +4,7 @@ import re
 from datetime import datetime
 
 from sqlalchemy import delete, func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from .models import Memory
 from .schemas import MemoryType
@@ -645,6 +645,59 @@ def list_stale_memories(
         .limit(limit)
     )
     return list(db.execute(stmt).scalars().all())
+
+
+def find_duplicate_pairs(
+    db: Session,
+    user_id: int,
+    *,
+    threshold: float,
+    limit: int = 20,
+) -> list[tuple[Memory, Memory, float]]:
+    """找出语义高度接近的 semantic 记忆对（疑似同一个槽位存成了两条）。
+
+    为什么是"列出来"而不是"自动合并"
+    --------------------------------
+    向量的相似度区间和判断安全性不重合：
+      - 0.97 以上：基本是同一句话换了几个字，合并很安全，但这种情况
+        提取时的 LLM 自己就能认出来（已知记忆里有 key），不需要代码兜底；
+      - 0.85~0.97：正是 key 漂移真正发生的区间，也恰恰是最危险的区间
+        —— "用 FastAPI 做后端"和"不用 FastAPI，改 Django" 的向量非常
+        接近，含义却相反。在这里自动覆盖，等于让代码去猜否定句。
+
+    所以这里只做检测：把可疑的对子报给上层展示，由人（或将来更可靠的
+    判断）决定怎么处理。误报的代价只是多显示一行，误合并的代价是丢记忆。
+
+    用 a.id < b.id 而不是 != 去重：否则每对会返回两次（AB 和 BA），
+    而且自连接会把每条跟自己比一遍（相似度恒为 1）。
+    """
+    left = aliased(Memory)
+    right = aliased(Memory)
+    distance = left.embedding.cosine_distance(right.embedding)
+
+    stmt = (
+        select(left, right, distance.label("distance"))
+        .where(
+            left.user_id == user_id,
+            right.user_id == user_id,
+            left.type == MemoryType.SEMANTIC.value,
+            right.type == MemoryType.SEMANTIC.value,
+            left.id < right.id,
+            left.embedding.is_not(None),
+            right.embedding.is_not(None),
+            left.status.notin_((ARCHIVED, CONSOLIDATED)),
+            right.status.notin_((ARCHIVED, CONSOLIDATED)),
+            distance <= (1.0 - threshold),
+        )
+        .order_by(distance.asc())
+        .limit(limit)
+    )
+
+    pairs: list[tuple[Memory, Memory, float]] = []
+    for row in db.execute(stmt).all():
+        similarity = max(0.0, min(1.0, 1.0 - float(row.distance)))
+        pairs.append((row[0], row[1], similarity))
+    return pairs
 
 
 def list_decaying_memories(

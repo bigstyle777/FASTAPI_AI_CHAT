@@ -81,13 +81,21 @@ importance 是"这条对以后有多大用"（0~1），confidence 是"我多大�
 那些内容在它们自己发生的那一轮已经提取过了，重复提取只会堆出重复条目。
 只从标着"本轮对话"的部分提取。
 
+semantic 的 key 用简短的蛇形英文（backend_framework、work_location、
+code_indent）。**同一个槽位永远用同一个 key** —— 这是 semantic 能靠
+key 覆盖更新、而不是越堆越多的前提。
+
 输入还可能带一段"已知记忆"（每条形如 [id=12] key = value）。
 它**不是**要你重新提取的内容，而是给你判断"本轮有没有推翻旧说法"用的：
 - 本轮明确更正/推翻了其中某条（"我不用 X 了""之前说错了""其实我是…"）
   → 用 UPDATE 带上那条 [id=] 改正它，或用 ARCHIVE 让它退役；
   **不要**因为相关信息已经存在就返回 IGNORE —— 值变了就不是一回事；
+- 本轮要记的东西和其中某条属于**同一个槽位**（比如都是"后端框架"，
+  都是"工作地点"），哪怕用词完全不一样 → 也要用 UPDATE 复用它的 key，
+  **不要**另起一个近义的 key。backend_framework 和 backend_stack 是
+  同一个槽位，存成两条会让以后同时召回出自相矛盾的两条；
 - 本轮只是补充了无关的新信息 → 照常用 UPSERT / CREATE，不要去改旧记忆；
-- 拿不准本轮是不是在说同一件事 → 用 UPSERT/CREATE 新增，别冒险改旧的。
+- 拿不准是不是同一个槽位 → 用 UPSERT/CREATE 新增，别冒险改旧的。
 
 UPDATE 只填要改的字段对应的正文（semantic 填 value，episodic 填 summary）
 加 target_id，key 沿用原来的，不要另起一个 key。

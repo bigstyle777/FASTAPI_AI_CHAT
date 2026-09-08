@@ -191,3 +191,14 @@ EXTRACTION_FOCUS_HEADER: str = "【本轮对话，只从这里提取记忆】"
 # 注意这一步用的检索是 mark_accessed=False：提取器在读库不等于用户用到
 # 了这些记忆，不能刷新 last_accessed_at（见 extractor._known_memories_for）。
 EXTRACTION_KNOWN_MEMORIES: int = 8
+
+
+# ---------------------------------------------------------------------------
+# 疑似重复（semantic 的 key 漂移检测）
+# ---------------------------------------------------------------------------
+
+# 两条 semantic 记忆的向量相似度达到这个值，就报为"疑似同一个槽位存了
+# 两条"。只用于提示，不自动合并 —— 理由见 repository.find_duplicate_pairs
+# 的 docstring（相似度落在漂移区间的样本，恰恰是最容易误判的：
+# "用 FastAPI" 与 "不用 FastAPI" 向量极近、含义相反）。
+DUPLICATE_SIMILARITY_THRESHOLD: float = 0.90

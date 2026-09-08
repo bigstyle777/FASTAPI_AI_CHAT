@@ -52,6 +52,7 @@ from app.memory.models import Memory  # noqa: E402
 from app.memory.repository import (  # noqa: E402
     create_episodic,
     delete_memory,
+    find_duplicate_pairs,
     get_by_id,
     get_by_key,
     list_by_key,
@@ -70,6 +71,7 @@ from app.memory.reranker import (  # noqa: E402
     rerank,
     score_candidate,
 )
+from app.memory.router import _pick_keep  # noqa: E402
 from app.memory.schemas import (  # noqa: E402
     MemoryAction,
     MemoryActionType,
@@ -80,6 +82,22 @@ from app.memory.status import ACTIVE, ARCHIVED  # noqa: E402
 from app.user.repository import create_user  # noqa: E402
 
 DIMENSION = settings.rag_embedding_dimension
+
+
+def _unit_vector(index: int) -> list[float]:
+    """只在指定坐标上是 1 的单位向量：不同 index 互相正交（相似度 0）。"""
+    vector = [0.0] * DIMENSION
+    vector[index % DIMENSION] = 1.0
+    return vector
+
+
+def _two_token_vector() -> list[float]:
+    """两个 token 各占一半的向量：与任一单位向量的余弦都是 1/√2 ≈ 0.707。"""
+    vector = [0.0] * DIMENSION
+    vector[0] = 1.0
+    vector[1 % DIMENSION] = 1.0
+    norm = (vector[0] ** 2 + vector[1 % DIMENSION] ** 2) ** 0.5
+    return [value / norm for value in vector]
 
 
 # ===========================================================================
@@ -1129,3 +1147,115 @@ class TestExtractionSeesKnownMemories:
         )
 
         assert get_by_id(db, memory.id, user_id).last_accessed_at is None
+
+
+# ===========================================================================
+# 疑似重复检测（semantic 的 key 漂移）
+# ===========================================================================
+
+
+class TestFindDuplicatePairs:
+    """key 由 LLM 生成，同一个槽位可能被写成两个 key。
+
+    这里只检测不合并：相似不等于同义（"用 X" 和 "不用 X" 向量极近），
+    误合并会丢记忆，误报只是多显示一行。
+    """
+
+    def _pair(self, db, user_id, key, value, vector, **kwargs):
+        return upsert_semantic(
+            db, user_id, key, value, embedding=vector, **kwargs
+        )
+
+    def test_near_identical_memories_are_reported(self, db):
+        user_id = _make_user(db, "dup-yes")
+        same = _unit_vector(0)
+        self._pair(db, user_id, "backend_framework", "用 FastAPI", same)
+        self._pair(db, user_id, "backend_stack", "用 FastAPI 做后端", same)
+
+        pairs = find_duplicate_pairs(db, user_id, threshold=0.9)
+
+        assert len(pairs) == 1
+        keys = {pairs[0][0].key, pairs[0][1].key}
+        assert keys == {"backend_framework", "backend_stack"}
+        assert pairs[0][2] > 0.99
+
+    def test_unrelated_memories_are_not_reported(self, db):
+        user_id = _make_user(db, "dup-no")
+        self._pair(db, user_id, "lang", "用 Python", _unit_vector(0))
+        self._pair(db, user_id, "hobby", "喜欢爬山", _unit_vector(1))
+
+        assert find_duplicate_pairs(db, user_id, threshold=0.9) == []
+
+    def test_each_pair_reported_once(self, db):
+        """a.id < b.id 去重：同一对不能报两次，也不能跟自己比。"""
+        user_id = _make_user(db, "dup-once")
+        same = _unit_vector(0)
+        for index in range(3):
+            self._pair(db, user_id, f"k{index}", "同一件事", same)
+
+        # 3 条两两组合 = 3 对，不是 6 对（含反向）也不是 6 对（含自比）
+        assert len(find_duplicate_pairs(db, user_id, threshold=0.9)) == 3
+
+    def test_archived_memories_excluded(self, db):
+        user_id = _make_user(db, "dup-archived")
+        same = _unit_vector(0)
+        self._pair(db, user_id, "live", "活着的一条", same)
+        archived = self._pair(db, user_id, "gone", "已归档的一条", same)
+        archived.status = ARCHIVED
+        db.commit()
+
+        assert find_duplicate_pairs(db, user_id, threshold=0.9) == []
+
+    def test_memories_without_embedding_are_skipped(self, db):
+        """没向量的行无法参与比较，直接跳过而不是报错。"""
+        user_id = _make_user(db, "dup-novec")
+        upsert_semantic(db, user_id, "a", "没有向量的一条")
+        upsert_semantic(db, user_id, "b", "也没有向量的一条")
+
+        assert find_duplicate_pairs(db, user_id, threshold=0.9) == []
+
+    def test_threshold_is_respected(self, db):
+        user_id = _make_user(db, "dup-threshold")
+        self._pair(db, user_id, "a", "一半重合", _unit_vector(0))
+        # 与 [1,1,0...] 的余弦约 0.707 —— 低于 0.9 不该报
+        self._pair(db, user_id, "b", "另一半重合", _two_token_vector())
+
+        assert find_duplicate_pairs(db, user_id, threshold=0.9) == []
+        assert len(find_duplicate_pairs(db, user_id, threshold=0.6)) == 1
+
+
+class TestPickKeep:
+    """建议保留哪条：机器只给建议，不替用户拍板。"""
+
+    @staticmethod
+    def _row(**kwargs):
+        from datetime import datetime
+
+        defaults = dict(
+            id=1, user_id=1, type=MemoryType.SEMANTIC,
+            key="k", value="v", importance=0.5,
+            updated_at=datetime(2026, 1, 1),
+        )
+        defaults.update(kwargs)
+        return MemoryRead(**defaults)
+
+    def test_higher_importance_wins(self):
+        weak = self._row(id=1, importance=0.2)
+        strong = self._row(id=2, importance=0.9)
+        assert _pick_keep(weak, strong) is strong
+        assert _pick_keep(strong, weak) is strong
+
+    def test_newer_wins_on_tie(self):
+        from datetime import datetime
+
+        old = self._row(id=1, updated_at=datetime(2026, 1, 1))
+        new = self._row(id=2, updated_at=datetime(2026, 6, 1))
+        assert _pick_keep(old, new) is new
+
+    def test_missing_updated_at_does_not_crash(self):
+        """updated_at 为 None 的对象不该让比较炸掉（列有 NOT NULL，但防御一下）。"""
+        from datetime import datetime
+
+        blank = self._row(id=1, updated_at=None)
+        normal = self._row(id=2)
+        assert _pick_keep(blank, normal) is normal

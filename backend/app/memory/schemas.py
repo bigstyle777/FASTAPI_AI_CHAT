@@ -157,6 +157,24 @@ class MemoryUpdateRequest(BaseModel):
     content: str = Field(min_length=1, max_length=2000)
 
 
+class MemoryDuplicate(BaseModel):
+    """一对语义高度接近的 semantic 记忆（疑似同一个槽位存成了两条）。
+
+    keep / drop 只是**建议**：importance 高的一条优先保留，打平时留最近
+    更新过的。决定权在用户手上 —— 机器只负责把可疑的对子挑出来。
+    """
+
+    similarity: float
+    keep: MemoryRead
+    drop: MemoryRead
+
+
+class DuplicateListResponse(BaseModel):
+    success: bool
+    threshold: float
+    duplicates: list[MemoryDuplicate]
+
+
 class MemoryListResponse(BaseModel):
     success: bool
     memories: list[MemoryRead]
