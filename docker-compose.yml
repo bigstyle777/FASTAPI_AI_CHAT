@@ -192,7 +192,8 @@ services:
     image: aichat-frontend
     container_name: aichat-frontend
     ports:
-      - "8080:80"
+      # 宿主机端口可通过 FRONTEND_PORT 覆盖（本机 8080 常被其他工具占用）
+      - "${FRONTEND_PORT:-8080}:80"
     depends_on:
       backend:
         condition: service_healthy

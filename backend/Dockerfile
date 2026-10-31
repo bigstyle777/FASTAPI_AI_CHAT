@@ -15,6 +15,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 后端源码（tests / examples / uploads / .env 已被根 .dockerignore 排除）
 COPY backend ./backend
 
+# 内置 MCP server 脚本：容器内以 stdio 子进程方式启动，路径与本地一致
+COPY mcp_servers ./mcp_servers
+
 # 非 root 运行：创建低权限用户；uploads 目录先创建并归属 appuser，
 # 使 backend-uploads 命名卷首次挂载时继承正确属主（copy-on-first-use）
 RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser \
