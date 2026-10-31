@@ -45,16 +45,9 @@ def _should_try_next(error: Exception) -> bool:
     return isinstance(error, CircuitOpenError) or is_retryable_llm_error(error)
 
 
-def _build_targets(api_key, provider) -> list[ModelTarget]:
-    targets = resolve_model_targets(api_key, provider)
-    if targets:
-        return targets
-    return []
-
-
 async def chat_with_ai(messages: list, user_id=None, db=None):
     api_key, provider = await run_blocking(get_user_ai_settings, user_id=user_id, db=db)
-    targets = _build_targets(api_key, provider)
+    targets = resolve_model_targets(api_key, provider)
     if not targets:
         return _build_fallback_reply(messages, api_key=api_key)
 
@@ -109,7 +102,7 @@ async def chat_with_ai_stream(
 ):
     # 获取用户个人 AI 设置（个人中心保存的 Key 优先）
     api_key, provider = await run_blocking(get_user_ai_settings, user_id=user_id, db=db)
-    targets = _build_targets(api_key, provider)
+    targets = resolve_model_targets(api_key, provider)
     if not targets:
         yield StreamErrorEvent(message=_build_fallback_reply(messages, api_key=api_key))
         return

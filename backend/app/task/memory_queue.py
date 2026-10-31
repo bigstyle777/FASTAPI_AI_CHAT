@@ -15,6 +15,20 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _enqueue(task, args: tuple, label: str) -> bool:
+    """把任务放进 Celery 队列；入队失败只记日志，不抛给主流程。
+
+    所有 memory 入队都不重试（retry=False）：重复执行会重复提取/合并，
+    而这些操作不是幂等的代价较高，宁可丢一次也不要重放。
+    """
+    try:
+        task.apply_async(args=args, retry=False)
+        return True
+    except Exception:
+        logger.exception("Failed to enqueue %s", label)
+        return False
+
+
 def enqueue_memory_extraction(
     user_id: int,
     session_id: int | None,
@@ -27,17 +41,13 @@ def enqueue_memory_extraction(
     是本轮 user/assistant），focus_last 默认 2 与之配套：提取只针对本轮，
     前面的上下文仅用于消解指代。
     """
-    try:
-        from .memory_tasks import extract_and_save_memory_task
+    from .memory_tasks import extract_and_save_memory_task
 
-        extract_and_save_memory_task.apply_async(
-            args=(user_id, session_id, conversation, focus_last),
-            retry=False,
-        )
-        return True
-    except Exception:
-        logger.exception("Failed to enqueue memory extraction")
-        return False
+    return _enqueue(
+        extract_and_save_memory_task,
+        (user_id, session_id, conversation, focus_last),
+        "memory extraction",
+    )
 
 
 def enqueue_consolidation(user_id: int) -> bool:
@@ -45,29 +55,13 @@ def enqueue_consolidation(user_id: int) -> bool:
 
     合并每组要调一次 LLM，比较慢，所以走队列而不是同步执行。
     """
-    try:
-        from .memory_tasks import consolidate_memories_task
+    from .memory_tasks import consolidate_memories_task
 
-        consolidate_memories_task.apply_async(
-            args=(user_id,),
-            retry=False,
-        )
-        return True
-    except Exception:
-        logger.exception("Failed to enqueue memory consolidation")
-        return False
+    return _enqueue(consolidate_memories_task, (user_id,), "memory consolidation")
 
 
 def enqueue_decay(user_id: int) -> bool:
     """把"生命周期清扫（过期/降级/归档）"任务放进 Celery 队列。"""
-    try:
-        from .memory_tasks import decay_memories_task
+    from .memory_tasks import decay_memories_task
 
-        decay_memories_task.apply_async(
-            args=(user_id,),
-            retry=False,
-        )
-        return True
-    except Exception:
-        logger.exception("Failed to enqueue memory decay")
-        return False
+    return _enqueue(decay_memories_task, (user_id,), "memory decay")

@@ -254,9 +254,9 @@ async def _agent_stream_inner(
 
         api_key, provider = await run_blocking(get_user_ai_settings, user_id=user_id, db=db)
         targets = resolve_model_targets(api_key=api_key, provider=provider)
-        if not targets:
-            raise BusinessError("当前 AI 服务暂不可用，请先在个人中心配置 API Key")
-        client = get_async_client_for(targets[0])
+        # targets 为空（没配 Key）或 openai 包缺失都会让 client 拿不到，
+        # 两者对用户的表现一致，合并成一个出口避免重复判空
+        client = get_async_client_for(targets[0]) if targets else None
         if client is None:
             raise BusinessError("当前 AI 服务暂不可用，请先在个人中心配置 API Key")
         model = targets[0].model

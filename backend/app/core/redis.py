@@ -1,7 +1,7 @@
 import json
 import time
 from functools import lru_cache
-from typing import Any
+from typing import Any, Callable
 
 from redis import Redis
 from redis.exceptions import RedisError
@@ -53,10 +53,6 @@ def _memory_delete(*keys: str) -> int:
     return deleted
 
 
-def _memory_incr(key: str) -> int:
-    return _memory_incrby(key, 1)
-
-
 def _memory_incrby(key: str, amount: int) -> int:
     current = _memory_get(key)
     count = int(current or "0") + amount
@@ -83,6 +79,21 @@ def _mark_redis_unavailable():
     _REDIS_RETRY_AT = time.time() + _REDIS_RETRY_INTERVAL_SECONDS
 
 
+def _call_redis(real: Callable[[], Any], fallback: Callable[[], Any]):
+    """尝试 Redis 操作，失败降级到进程内内存副本。
+
+    所有 redis_xxx 操作共用这一段：Redis 暂不可用时标记 30 秒内
+    直接走 fallback，避免每个操作各自重复 try/except + 降级样板。
+    """
+    if not _should_try_redis():
+        return fallback()
+    try:
+        return real()
+    except RedisError:
+        _mark_redis_unavailable()
+        return fallback()
+
+
 @lru_cache(maxsize=1)
 def get_redis() -> Redis:
     return Redis.from_url(
@@ -94,75 +105,50 @@ def get_redis() -> Redis:
 
 
 def redis_set(key: str, value: str, ttl: int | None = None):
-    if not _should_try_redis():
-        return _memory_set(key, value, ttl=ttl)
-
-    try:
-        return get_redis().set(key, value, ex=ttl)
-    except RedisError:
-        _mark_redis_unavailable()
-        return _memory_set(key, value, ttl=ttl)
+    return _call_redis(
+        lambda: get_redis().set(key, value, ex=ttl),
+        lambda: _memory_set(key, value, ttl=ttl),
+    )
 
 
 def redis_get(key: str) -> str | None:
-    if not _should_try_redis():
-        return _memory_get(key)
-
-    try:
-        return get_redis().get(key)
-    except RedisError:
-        _mark_redis_unavailable()
-        return _memory_get(key)
+    return _call_redis(
+        lambda: get_redis().get(key),
+        lambda: _memory_get(key),
+    )
 
 
 def redis_delete(*keys: str) -> int:
     if not keys:
         return 0
-
-    if not _should_try_redis():
-        return _memory_delete(*keys)
-
-    try:
-        return int(get_redis().delete(*keys))
-    except RedisError:
-        _mark_redis_unavailable()
-        return _memory_delete(*keys)
+    return _call_redis(
+        lambda: int(get_redis().delete(*keys)),
+        lambda: _memory_delete(*keys),
+    )
 
 
 def redis_incr(key: str) -> int | None:
-    if not _should_try_redis():
-        return _memory_incr(key)
-
-    try:
-        return get_redis().incr(key)
-    except RedisError:
-        _mark_redis_unavailable()
-        return _memory_incr(key)
+    return _call_redis(
+        lambda: get_redis().incr(key),
+        lambda: _memory_incrby(key, 1),
+    )
 
 
 def redis_expire(key: str, ttl: int) -> bool:
-    if not _should_try_redis():
-        return _memory_expire(key, ttl)
-
-    try:
-        return bool(get_redis().expire(key, ttl))
-    except RedisError:
-        _mark_redis_unavailable()
-        return _memory_expire(key, ttl)
+    return _call_redis(
+        lambda: bool(get_redis().expire(key, ttl)),
+        lambda: _memory_expire(key, ttl),
+    )
 
 
 def redis_incrby(key: str, amount: int) -> int:
     """原子累加（预算计数用）；amount 可为负数。"""
-    if not _should_try_redis():
-        return _memory_incrby(key, amount)
+    return _call_redis(
+        lambda: int(get_redis().incrby(key, amount)),
+        lambda: _memory_incrby(key, amount),
+    )
 
-    try:
-        return int(get_redis().incrby(key, amount))
-    except RedisError:
-        _mark_redis_unavailable()
-        return _memory_incrby(key, amount)
 
-    
 def redis_set_json(key: str, value: Any, ttl: int | None = None):
     return redis_set(key, json.dumps(value, ensure_ascii=False), ttl=ttl)
 

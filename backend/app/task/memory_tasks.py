@@ -12,6 +12,24 @@ from ..memory.manager import apply_actions, backfill_missing_embeddings
 logger = logging.getLogger(__name__)
 
 
+def _run_memory_task(label: str, user_id: int, op, empty_result):
+    """Memory 任务的统一骨架：开 DB → 执行 → 异常吞掉返回空结果 → 关库。
+
+    三个 memory 任务的结构完全一致，只是业务调用和"失败时的空结果"
+    形状不同。吞异常是有意的：任务带 task_acks_late，抛出去会被重投，
+    而提取/合并/清扫都不该重复执行（重复提取会自我强化记忆），
+    宁可记日志后当成功返回，让 broker 不再重投。
+    """
+    db = SessionLocal()
+    try:
+        return op(db)
+    except Exception:
+        logger.exception("%s 失败 user_id=%s", label, user_id)
+        return empty_result
+    finally:
+        db.close()
+
+
 @celery_app.task(name="app.task.memory_tasks.extract_and_save_memory_task")
 def extract_and_save_memory_task(
     user_id: int,
@@ -28,8 +46,8 @@ def extract_and_save_memory_task(
     是本轮 user/assistant；focus_last 告诉提取器把这几条单独标成"本轮"，
     只从这里提取（默认 2）。旧任务消息没这个参数时走默认值，向后兼容。
     """
-    db = SessionLocal()
-    try:
+
+    def op(db):
         actions = extract_memories_for_user(
             db, user_id, conversation, focus_last=focus_last
         )
@@ -39,11 +57,8 @@ def extract_and_save_memory_task(
             "applied": [memory.id for memory in applied],
             "backfilled": backfilled,
         }
-    except Exception:
-        logger.exception("提取并保存记忆后台任务失败 user_id=%s", user_id)
-        return {"applied": [], "backfilled": 0}
-    finally:
-        db.close()
+
+    return _run_memory_task("提取并保存记忆", user_id, op, {"applied": [], "backfilled": 0})
 
 
 @celery_app.task(name="app.task.memory_tasks.consolidate_memories_task")
@@ -53,18 +68,15 @@ def consolidate_memories_task(user_id: int):
     按用户决定不引入定时调度（无 Beat），由用户在记忆页点击"合并"
     或运维手动调用入队。失败不重试 —— 重复事件下次再跑即可。
     """
-    db = SessionLocal()
-    try:
+
+    def op(db):
         result = run_consolidation_for_user(db, user_id)
-        logger.info(
-            "用户 %s 记忆合并完成: %s", user_id, result
-        )
+        logger.info("用户 %s 记忆合并完成: %s", user_id, result)
         return result
-    except Exception:
-        logger.exception("用户 %s 记忆合并后台任务失败", user_id)
-        return {"consolidated": 0, "reason": "internal_error"}
-    finally:
-        db.close()
+
+    return _run_memory_task(
+        "记忆合并", user_id, op, {"consolidated": 0, "reason": "internal_error"}
+    )
 
 
 @celery_app.task(name="app.task.memory_tasks.decay_memories_task")
@@ -74,13 +86,15 @@ def decay_memories_task(user_id: int):
     按用户决定不引入定时调度（无 Beat）：需要定期跑时由运维/上层
     调度器按需调用入队，而不是 Celery Beat 定时。
     """
-    db = SessionLocal()
-    try:
+
+    def op(db):
         result = run_decay(db, user_id)
         logger.info("用户 %s 生命周期清扫完成: %s", user_id, result)
         return result
-    except Exception:
-        logger.exception("用户 %s 生命周期清扫后台任务失败", user_id)
-        return {"expired_archived": 0, "decayed": 0, "observation_archived": 0}
-    finally:
-        db.close()
+
+    return _run_memory_task(
+        "生命周期清扫",
+        user_id,
+        op,
+        {"expired_archived": 0, "decayed": 0, "observation_archived": 0},
+    )
