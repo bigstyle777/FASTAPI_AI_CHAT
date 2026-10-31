@@ -16,6 +16,7 @@ from ...core.exceptions import BusinessError
 from ...core.stop_signal import StopWatcher, clear_stopped, mark_stopped
 from ...task.memory_queue import enqueue_memory_extraction
 from ...memory.extractor import build_extraction_input
+from ...usage.service import budget_rejection_message, safe_record
 from .message_context import build_memory_messages
 from ..repository import (
     delete_message,
@@ -95,6 +96,9 @@ def delete_message_service(db, user, message_id):
 
 async def send_message_service(db, user, request):
     message = await run_blocking(_get_validated_message, db, user, request)
+    rejection = await run_blocking(budget_rejection_message, user["user_id"])
+    if rejection:
+        raise BusinessError(rejection)
     user_message = await run_blocking(
         persist_user_message, db, user["user_id"], request.session_id, message
     )
@@ -240,6 +244,7 @@ async def _stream_generation(
     await run_blocking(clear_generation_status, session_id)
     # 清掉上一轮可能残留的标记，避免它一直堵着这个会话
     clear_stopped(session_id)
+    started_at = perf_counter()
     # 生成任务生命周期的 DB 写（建任务/流转/落库）全部用同步调用、不走
     # 线程池：每次生成只有几次、约 1ms，换来的是断连取消后收尾逻辑仍能
     # 执行——取消域内任何 await 都会立刻再抛 CancelledError，同步调用不受影响。
@@ -295,6 +300,18 @@ async def _stream_generation(
                     db, generation.id,
                     from_status=(RUNNING,), to_status=FAILED, error=event.message,
                 )
+                safe_record(
+                    db,
+                    user_id=user_id,
+                    session_id=session_id,
+                    scene="chat",
+                    provider=usage.provider or "",
+                    model=usage.model,
+                    usage=usage,
+                    status="failed",
+                    latency_ms=int((perf_counter() - started_at) * 1000),
+                    error=event.message,
+                )
                 clear_generation_status(session_id)
                 clear_stopped(session_id)
                 yield sse_event(event.type, event)
@@ -339,6 +356,17 @@ async def _stream_generation(
         prompt_tokens=usage.prompt_tokens,
         completion_tokens=usage.completion_tokens,
         total_tokens=usage.total_tokens,
+    )
+    safe_record(
+        db,
+        user_id=user_id,
+        session_id=session_id,
+        scene="chat",
+        provider=usage.provider or "",
+        model=usage.model,
+        usage=usage,
+        status="success" if stop_reason is None else "cancelled",
+        latency_ms=int((perf_counter() - started_at) * 1000),
     )
     clear_generation_status(session_id)
     clear_stopped(session_id)
@@ -402,6 +430,11 @@ async def modify_message_service(db, user, message_id, new_content, is_disconnec
     if message.role != "user":
         raise BusinessError("只能修改用户消息")
 
+    rejection = await run_blocking(budget_rejection_message, user["user_id"])
+    if rejection:
+        yield sse_event("error", StreamErrorEvent(message=rejection))
+        return
+
     message = await run_blocking(update_message, db, message_id, new_content)
     assert message is not None
     await run_blocking(delete_messages_after, db, message.session_id, message.id)
@@ -438,6 +471,11 @@ async def send_message_stream_service(
             "error",
             StreamErrorEvent(message="请求太频繁，请稍后重试"),
         )
+        return
+
+    rejection = await run_blocking(budget_rejection_message, user_id)
+    if rejection:
+        yield sse_event("error", StreamErrorEvent(message=rejection))
         return
 
     try:

@@ -34,6 +34,7 @@ import app.agent.models  # noqa: E402,F401
 import app.chat.models  # noqa: E402,F401
 import app.memory.models  # noqa: E402,F401
 import app.rag.models  # noqa: E402,F401
+import app.usage.models  # noqa: E402,F401
 import app.user.models  # noqa: E402,F401
 from app.admin.repository import create_role, get_role_by_name  # noqa: E402
 from app.core.database import DATABASE_URL, Base  # noqa: E402
@@ -142,6 +143,10 @@ def _mock_redis(monkeypatch):
         store[key] = store.get(key, 0) + 1
         return store[key]
 
+    def redis_incrby(key, amount):
+        store[key] = int(store.get(key, 0)) + amount
+        return store[key]
+
     def redis_expire(key, ttl=None):
         return None
 
@@ -151,6 +156,7 @@ def _mock_redis(monkeypatch):
     monkeypatch.setattr(redis_mod, "redis_set_json", redis_set_json)
     monkeypatch.setattr(redis_mod, "redis_get_json", redis_get_json)
     monkeypatch.setattr(redis_mod, "redis_incr", redis_incr)
+    monkeypatch.setattr(redis_mod, "redis_incrby", redis_incrby)
     monkeypatch.setattr(redis_mod, "redis_expire", redis_expire)
 
     return store

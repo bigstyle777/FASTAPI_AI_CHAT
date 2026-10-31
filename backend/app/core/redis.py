@@ -54,8 +54,12 @@ def _memory_delete(*keys: str) -> int:
 
 
 def _memory_incr(key: str) -> int:
+    return _memory_incrby(key, 1)
+
+
+def _memory_incrby(key: str, amount: int) -> int:
     current = _memory_get(key)
-    count = int(current or "0") + 1
+    count = int(current or "0") + amount
     _, expires_at = _MEMORY_STORE.get(key, ("", None))
     _MEMORY_STORE[key] = (str(count), expires_at)
     return count
@@ -145,6 +149,19 @@ def redis_expire(key: str, ttl: int) -> bool:
     except RedisError:
         _mark_redis_unavailable()
         return _memory_expire(key, ttl)
+
+
+def redis_incrby(key: str, amount: int) -> int:
+    """原子累加（预算计数用）；amount 可为负数。"""
+    if not _should_try_redis():
+        return _memory_incrby(key, amount)
+
+    try:
+        return int(get_redis().incrby(key, amount))
+    except RedisError:
+        _mark_redis_unavailable()
+        return _memory_incrby(key, amount)
+
     
 def redis_set_json(key: str, value: Any, ttl: int | None = None):
     return redis_set(key, json.dumps(value, ensure_ascii=False), ttl=ttl)

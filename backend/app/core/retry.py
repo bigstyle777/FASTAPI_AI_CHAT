@@ -18,6 +18,7 @@ from typing import Awaitable, Callable, TypeVar
 
 from openai import APIConnectionError, InternalServerError, RateLimitError
 
+from . import circuit_breaker
 from .config import settings
 
 logger = logging.getLogger(__name__)
@@ -39,16 +40,26 @@ async def call_with_retry(
     max_attempts: int,
     base_seconds: float,
     cap_seconds: float,
+    circuit_target: tuple[str, str] | None = None,
 ) -> T:
     """对一次异步调用做有限次重试（含首次共 max_attempts 次）。
 
     可重试错误按指数退避+全抖动等待后再试；不可重试错误或次数耗尽
     时把最后一次异常原样抛出。
+
+    circuit_target=(provider, base_url) 时接入熔断：每次尝试前检查，
+    本轮失败刚好把熔断打开就立刻停止重试，不再硬扛剩余退避。
     """
     for attempt in range(max_attempts):
+        if circuit_target is not None and not circuit_breaker.acquire(*circuit_target):
+            raise circuit_breaker.CircuitOpenError(
+                f"AI 服务暂时不可用（{circuit_target[0]} 上游熔断中），请稍后再试"
+            )
         try:
-            return await fn()
+            result = await fn()
         except Exception as error:
+            if circuit_target is not None and is_retryable_llm_error(error):
+                circuit_breaker.record_failure(*circuit_target)
             if not is_retryable_llm_error(error) or attempt == max_attempts - 1:
                 raise
             delay = random.uniform(0, min(cap_seconds, base_seconds * 2**attempt))
@@ -60,10 +71,16 @@ async def call_with_retry(
                 error,
             )
             await asyncio.sleep(delay)
+        else:
+            if circuit_target is not None:
+                circuit_breaker.record_success(*circuit_target)
+            return result
     raise AssertionError("unreachable: 循环必然以 return 或 raise 结束")
 
 
-async def create_chat_completion_with_retry(client, **kwargs):
+async def create_chat_completion_with_retry(
+    client, *, circuit_target: tuple[str, str] | None = None, **kwargs
+):
     """包一层 chat.completions.create()：只重试"还没吐出 token"的建连阶段。
 
     create() 返回之后的流式消费不在此重试（见模块 docstring 的保守策略）。
@@ -73,4 +90,5 @@ async def create_chat_completion_with_retry(client, **kwargs):
         max_attempts=settings.llm_retry_max_attempts,
         base_seconds=settings.llm_retry_base_seconds,
         cap_seconds=settings.llm_retry_cap_seconds,
+        circuit_target=circuit_target,
     )

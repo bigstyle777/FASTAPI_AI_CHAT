@@ -33,6 +33,7 @@ from typing import Any, AsyncGenerator, Callable
 from starlette.concurrency import run_in_threadpool
 
 from ..chat.schemas import StreamDeltaEvent, StreamUsageEvent, TokenUsage
+from ..core.config import settings
 from ..core.retry import create_chat_completion_with_retry
 from ..tools import ALL_TOOLS, TOOL_REGISTRY
 
@@ -220,6 +221,7 @@ async def run_tool_loop(
     max_turns=MAX_TOOL_TURNS,
     on_tool_call: Callable[..., Any] | None = None,
     on_tool_result: Callable[..., Any] | None = None,
+    circuit_target: tuple[str, str] | None = None,
 ):
     """
     非流式工具调用循环（用于普通聊天接口）。
@@ -233,9 +235,15 @@ async def run_tool_loop(
 
     history = [dict(m) for m in messages]
     for _ in range(max_turns):
-        response = await create_chat_completion_with_retry(
-            client, model=model, messages=history, tools=ALL_TOOLS
-        )
+        kwargs = {
+            "model": model,
+            "messages": history,
+            "tools": ALL_TOOLS,
+            "circuit_target": circuit_target,
+        }
+        if settings.llm_max_output_tokens:
+            kwargs["max_tokens"] = settings.llm_max_output_tokens
+        response = await create_chat_completion_with_retry(client, **kwargs)
         message = response.choices[0].message
 
         # 模型不再调用工具，直接给出最终回答
@@ -336,6 +344,8 @@ async def stream_with_tools(
     *,
     on_tool_call: Callable[..., Any] | None = None,
     on_tool_result: Callable[..., Any] | None = None,
+    circuit_target: tuple[str, str] | None = None,
+    provider: str | None = None,
 ):
     """
     流式对话生成器（支持工具调用），产出 StreamDeltaEvent / StreamUsageEvent。
@@ -359,9 +369,12 @@ async def stream_with_tools(
             "messages": history,
             "stream": True,
             "stream_options": {"include_usage": True},
+            "circuit_target": circuit_target,
         }
         if use_tools:
             kwargs["tools"] = ALL_TOOLS
+        if settings.llm_max_output_tokens:
+            kwargs["max_tokens"] = settings.llm_max_output_tokens
 
         # 只重试 create() 建连阶段；流式消费中途的断流不重试（core/retry.py）
         response = await create_chat_completion_with_retry(client, **kwargs)
@@ -417,6 +430,7 @@ async def stream_with_tools(
                     completion_tokens=round_result.usage.completion_tokens,
                     total_tokens=round_result.usage.total_tokens,
                     model=model,
+                    provider=provider,
                 )
             )
         return

@@ -26,6 +26,7 @@ import backend.app.agent.models  # noqa: F401
 import backend.app.chat.models  # noqa: F401
 import backend.app.memory.models  # noqa: F401
 import backend.app.rag.models  # noqa: F401
+import backend.app.usage.models  # noqa: F401
 import backend.app.user.models  # noqa: F401
 from backend.app.core.database import DATABASE_URL, Base
 

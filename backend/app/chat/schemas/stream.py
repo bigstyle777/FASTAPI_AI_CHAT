@@ -5,6 +5,8 @@ from pydantic import BaseModel
 
 # token字段
 class TokenUsage(BaseModel):
+    # provider 用于账本/展示"实际命中的是哪个供应商"，降级后不会串账
+    provider: Optional[str] = None
     model: Optional[str] = None
     prompt_tokens: int = 0
     completion_tokens: int = 0

@@ -1,6 +1,7 @@
 """Agent 的 HTTP 服务层：接收请求、串起主循环、落库并输出 SSE。"""
 
 import logging
+from time import perf_counter
 from typing import AsyncGenerator
 
 from sqlalchemy.orm import Session
@@ -26,6 +27,7 @@ from ..core.sse import sse_event
 from ..core.exceptions import BusinessError
 from ..core.stop_signal import StopWatcher, clear_stopped, is_stopped_locally
 from ..task.memory_queue import enqueue_memory_extraction
+from ..usage.service import budget_rejection_message, safe_record
 from .agent import run_agent_stream
 from .events import AgentDoneEvent, AgentPlanEvent
 from .repo import create_agent_run, update_agent_run
@@ -94,6 +96,7 @@ async def agent_stream_service(
     """POST /agent/stream 的 SSE 生成器。"""
     user_id = user["user_id"]
     session_id = request.session_id
+    started_at = perf_counter()
 
     allowed = await run_blocking(
         check_rate_limit,
@@ -103,6 +106,11 @@ async def agent_stream_service(
     )
     if not allowed:
         yield sse_event("error", StreamErrorEvent(message="请求太频繁，请稍后重试"))
+        return
+
+    rejection = await run_blocking(budget_rejection_message, user_id)
+    if rejection:
+        yield sse_event("error", StreamErrorEvent(message=rejection))
         return
 
     await run_blocking(clear_generation_status, session_id)
@@ -182,6 +190,19 @@ async def agent_stream_service(
             completion_tokens=outcome.usage.completion_tokens,
             total_tokens=outcome.usage.total_tokens,
             error_message=outcome.resolved_error_message(),
+        )
+        await run_blocking(
+            safe_record,
+            db,
+            user_id=user_id,
+            session_id=session_id,
+            scene="agent",
+            provider=provider or "",
+            model=outcome.usage.model or model,
+            usage=outcome.usage,
+            status={"completed": "success", "stopped": "cancelled"}.get(status, "failed"),
+            latency_ms=int((perf_counter() - started_at) * 1000),
+            error=outcome.resolved_error_message(),
         )
 
         if outcome.ai_reply.strip():

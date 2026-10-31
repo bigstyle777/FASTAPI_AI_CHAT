@@ -92,6 +92,26 @@ class Settings(BaseSettings):
     llm_retry_base_seconds: float = 0.5
     llm_retry_cap_seconds: float = 4.0
 
+    # ---- 阶段2：模型调用治理 ----
+    # 熔断：只统计可重试类错误（网络/超时/429/5xx）。
+    # 连续失败满阈值即打开，冷却期内直接拒绝，不再发起请求。
+    llm_circuit_failure_threshold: int = 5
+    llm_circuit_cooldown_seconds: int = 60
+    # HALF_OPEN 探测锁的有效期，防止探测请求本身挂死后永久锁住
+    llm_circuit_probe_ttl_seconds: int = 5
+    # 是否启用备用模型降级；用户自带 Key 时只会换模型、不换供应商
+    llm_fallback_enabled: bool = True
+    # 备用 provider；空表示"自动选另一家"（deepseek ↔ openai）
+    llm_fallback_provider: str | None = None
+    # 同供应商内可替换的备用模型；空表示不换模型
+    llm_fallback_model: str | None = None
+    # 单条回答的输出上限（传给 max_tokens），0 表示不显式限制
+    llm_max_output_tokens: int = 0
+    # 每个用户每天可用的 token 总额度，0 表示不限制
+    chat_user_daily_token_budget: int = 0
+    # 全局每天的成本上限（元），0 表示不限制
+    global_daily_cost_limit_yuan: float = 0
+
     @model_validator(mode="after")
     def fill_derived_defaults(self):
         # Docker secrets 惯例：<FIELD>_FILE 指向只读文件时，优先读取文件内容作为密钥。

@@ -10,6 +10,7 @@ except Exception:  # pragma: no cover - optional dependency fallback
     OpenAI = None
 
 import httpx
+from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from ..user.repository import get_user_settings
@@ -82,3 +83,86 @@ def get_user_ai_settings(user_id=None, db: Session | None = None):
             provider = row.provider or "deepseek"
 
     return api_key, provider
+
+
+@dataclass(frozen=True)
+class ModelTarget:
+    """一次调用可用的模型出口：provider + 出口地址 + 模型 + Key 归属。
+
+    is_user_key 决定降级边界：用户的 Key 只能在同一家供应商内换模型，
+    系统 Key 才允许跨供应商。
+    """
+
+    provider: str
+    base_url: str
+    model: str
+    api_key: str
+    is_user_key: bool
+
+
+def _provider_config(provider: str):
+    provider = provider.lower()
+    if provider == "openai":
+        return settings.openai_base_url, settings.openai_model
+    return settings.deepseek_base_url, settings.deepseek_model
+
+
+def _env_key(provider: str):
+    return settings.openai_api_key if provider.lower() == "openai" else settings.deepseek_api_key
+
+
+def resolve_model_targets(api_key=None, provider="deepseek") -> list[ModelTarget]:
+    """解析出主目标 + 可选备用目标的候选列表（按尝试顺序）。
+
+    没有可用 Key 时返回空列表，由调用方给"未配置 Key"的提示。
+    """
+    provider = (provider or "deepseek").lower()
+    base_url, model = _provider_config(provider)
+    is_user_key = bool(api_key)
+    key = api_key or _env_key(provider)
+    if not key or not model:
+        return []
+
+    targets = [ModelTarget(provider, base_url, model, key, is_user_key)]
+    if not settings.llm_fallback_enabled:
+        return targets
+
+    if is_user_key:
+        # 用户自己的 Key 不跨供应商，只在同 provider 内换模型
+        fallback_model = settings.llm_fallback_model
+        if fallback_model and fallback_model != model:
+            targets.append(ModelTarget(provider, base_url, fallback_model, key, True))
+        return targets
+
+    fallback_provider = (
+        settings.llm_fallback_provider or ("openai" if provider == "deepseek" else "deepseek")
+    ).lower()
+    if fallback_provider == provider:
+        return targets
+
+    fallback_base_url, default_fallback_model = _provider_config(fallback_provider)
+    fallback_model = settings.llm_fallback_model or default_fallback_model
+    fallback_key = _env_key(fallback_provider)
+    if fallback_key and fallback_model:
+        targets.append(
+            ModelTarget(
+                fallback_provider,
+                fallback_base_url,
+                fallback_model,
+                fallback_key,
+                False,
+            )
+        )
+    return targets
+
+
+def get_async_client_for(target: ModelTarget):
+    """按目标创建异步客户端（不读到 Key 时返回 None）。"""
+    if AsyncOpenAI is None:
+        return None
+    return AsyncOpenAI(
+        api_key=target.api_key,
+        base_url=target.base_url,
+        timeout=_llm_timeout(),
+        max_retries=0,
+    )
