@@ -1,0 +1,15 @@
+# 脚本文件必须保持 LF：Windows 上若被转成 CRLF，
+# bash 会把行尾的 \r 当成命令的一部分，导致 shebang 失效、脚本直接报错。
+# 受影响的有 git hooks 与容器入口脚本（docker/*.sh）。
+.githooks/** text eol=lf
+*.sh text eol=lf
+
+# 二进制资源不做换行转换，避免图片/字体被破坏
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary

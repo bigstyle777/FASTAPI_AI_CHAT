@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# 提交信息规范检查：要求 <type>(<scope>): <subject> 格式。
+# 启用方式（每个克隆执行一次）：git config core.hooksPath .githooks
+# 紧急情况要跳过：git commit --no-verify
+
+set -euo pipefail
+
+MSG_FILE="$1"
+SUBJECT="$(head -n 1 "$MSG_FILE")"
+
+# 合并提交、回滚提交不参与检查
+if echo "$SUBJECT" | grep -qE '^(Merge|Revert|fixup!|squash!)'; then
+  exit 0
+fi
+
+PATTERN='^(feat|fix|refactor|perf|test|docs|chore|ci|build|style)(\([a-zA-Z0-9_./-]+\))?: .+'
+
+if ! echo "$SUBJECT" | grep -qE "$PATTERN"; then
+  cat <<'EOF' >&2
+
+[提交被拒绝] 提交信息不符合规范。
+
+正确格式：
+    <type>(<scope>): <subject>
+
+示例：
+    feat(memory): 新增 key 漂移的疑似重复检测
+    fix(chat): 修复流式生成中断后消息未落库
+    chore: 清理开发残留文件
+
+type 允许值：feat fix refactor perf test docs chore ci build style
+scope 可选（模块名，如 memory / chat / rag / agent / admin / deploy）
+
+请改用规范格式后重新提交。跳过检查：git commit --no-verify
+EOF
+  exit 1
+fi
+
+# 主题行太长不易在 git log 里扫读
+if [ "${#SUBJECT}" -gt 72 ]; then
+  echo "[警告] 提交主题超过 72 字符（当前 ${#SUBJECT}），建议精简。" >&2
+fi
+
+exit 0

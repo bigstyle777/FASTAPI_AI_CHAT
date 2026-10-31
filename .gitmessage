@@ -1,0 +1,24 @@
+# 提交信息格式：<type>(<scope>): <subject>
+#
+# type 只能是下面这些（复制即可）：
+#   feat     新功能
+#   fix      修 bug
+#   refactor 重构（不改行为）
+#   perf     性能优化
+#   test     测试相关
+#   docs     文档
+#   chore    构建/依赖/杂项
+#   ci       CI 配置
+#   build    打包/构建
+#   style    格式（空格、分号等，不改逻辑）
+#
+# scope 可选：用模块名，如 memory / chat / rag / agent / admin / deploy
+#
+# subject：用中文或英文都行，动词开头，50 字以内，结尾不加句号
+#   好例子：feat(memory): 新增 key 漂移的疑似重复检测
+#   坏例子：再优化 / 修改 / zhangshihuanchun
+#
+# 正文（可选）：空一行后写"为什么这么改"，每行不超过 72 字
+# 脚注（可选）：BREAKING CHANGE: ... 或 Refs #123
+#
+# 以 # 开头的行会被自动忽略
