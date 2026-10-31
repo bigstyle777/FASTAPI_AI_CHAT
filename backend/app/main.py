@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from .agent.repo import sweep_stale_agent_runs
 from .admin.router import router as admin_router
 from .admin.service.rbac import ensure_bootstrap_admin, sync_default_rbac
 from .agent.router import router as agent_router
@@ -43,6 +44,7 @@ async def lifespan(app: FastAPI):
         )
         # 崩溃恢复：上次进程死掉时遗留的假 RUNNING 任务落为 FAILED
         sweep_stale_generations(db)
+        sweep_stale_agent_runs(db)
     # 启动时建立 MCP Server 连接（仅一次），发现的工具注册进现有工具体系；
     # 单个 server 失败只记录状态（get_unhealthy_servers 可查），
     # 不影响应用启动（本地工具与其他 server 仍可用）

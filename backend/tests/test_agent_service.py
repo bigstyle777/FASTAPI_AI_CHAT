@@ -24,6 +24,7 @@ if str(BACKEND_DIR) not in sys.path:
 from sqlalchemy import select  # noqa: E402
 
 import app.agent.service as agent_service  # noqa: E402
+import app.core.llm_gateway as llm_gateway  # noqa: E402
 from app.admin.repository import create_role, get_role_by_name  # noqa: E402
 from app.agent.models import AgentRun, AgentTracePoint  # noqa: E402
 from app.agent.service import agent_stream_service  # noqa: E402
@@ -31,6 +32,7 @@ from app.chat.repository import (  # noqa: E402
     create_session,
     get_messages_by_session,
 )
+from app.core.ai_client import ModelTarget  # noqa: E402
 from app.user.repository import create_user  # noqa: E402
 
 
@@ -155,12 +157,22 @@ def _run_agent_service(db, user, request):
 
 
 def _patch_client(monkeypatch, client):
-    """让 get_async_client 返回假 client（绕过 API Key 配置）。"""
+    """让模型目标链返回假 client（绕过 API Key 配置）。"""
     monkeypatch.setattr(
         agent_service,
-        "get_async_client",
-        lambda api_key=None, provider=None: (client, "fake-model"),
+        "get_user_ai_settings",
+        lambda user_id=None, db=None: (None, "deepseek"),
     )
+    monkeypatch.setattr(
+        agent_service,
+        "resolve_model_targets",
+        lambda api_key=None, provider="deepseek": [
+            ModelTarget("deepseek", "https://api.test/v1", "fake-model", "key", False)
+        ],
+    )
+    monkeypatch.setattr(agent_service, "get_async_client_for", lambda target: client)
+    # planner / executor / finalizer 走 core.llm_gateway 时也会按目标建 client
+    monkeypatch.setattr(llm_gateway, "get_async_client_for", lambda target: client)
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +259,9 @@ def test_agent_stream_rejects_blank_message(db):
 
 def test_agent_stream_without_client_reports_error(db, monkeypatch):
     user, session = _make_session(db, tag="nokey")
-    monkeypatch.setattr(agent_service, "get_async_client", lambda api_key=None, provider=None: None)
+    monkeypatch.setattr(
+        agent_service, "resolve_model_targets", lambda api_key=None, provider=None: []
+    )
 
     events = _run_agent_service(db, {"user_id": user.id}, _request(session.id))
     assert events[-1][0] == "error"

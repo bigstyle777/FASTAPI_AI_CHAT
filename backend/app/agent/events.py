@@ -42,4 +42,4 @@ class AgentToolEvent(BaseModel):
 class AgentDoneEvent(BaseModel):
     type: Literal["done"] = "done"
     run_id: int
-    status: Literal["completed", "stopped", "failed"]
+    status: Literal["completed", "stopped", "failed", "timed_out"]

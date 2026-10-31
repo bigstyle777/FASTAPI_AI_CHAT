@@ -9,12 +9,16 @@
 import json
 from typing import Any
 
+from ..chat.schemas import TokenUsage
+from ..core.config import settings
+from ..core.llm_gateway import complete
 from ..tools import TOOL_REGISTRY
 from .events import AgentToolEvent
 from .prompts import STEP_EXECUTOR_SYSTEM_PROMPT
 from .state import PlanStep, StepResult
 from .tool_calling import execute_tool_call, run_tool_loop
 from .trace import NullTracer
+from .usage import accumulate_usage, snapshot_usage
 
 
 def _tool_callbacks(tracer, step_index: int):
@@ -100,6 +104,9 @@ async def _execute_direct_tool(
     index: int,
     context: dict | None,
     tracer,
+    *,
+    timeout_seconds: float | None = None,
+    max_output_chars: int | None = None,
 ) -> StepResult:
     on_tool_call, on_tool_result = _tool_callbacks(tracer, index)
     tool_call = {
@@ -116,6 +123,8 @@ async def _execute_direct_tool(
             context,
             on_tool_call=on_tool_call,
             on_tool_result=on_tool_result,
+            timeout_seconds=timeout_seconds,
+            max_output_chars=max_output_chars,
         )
         if _is_tool_error(content):
             return StepResult(
@@ -139,6 +148,19 @@ async def _execute_direct_tool(
         )
 
 
+def _usage_delta(before, after, provider: str | None) -> dict[str, Any]:
+    """这一步 LLM 调用消耗的 token（前后累计差值），写进 trace。"""
+    if before is None or after is None:
+        return {}
+    return {
+        "prompt_tokens": after.prompt_tokens - before.prompt_tokens,
+        "completion_tokens": after.completion_tokens - before.completion_tokens,
+        "total_tokens": after.total_tokens - before.total_tokens,
+        "model": after.model,
+        "provider": after.provider or provider,
+    }
+
+
 def _build_step_prompt(step: PlanStep, execution_log: list[str]) -> str:
     lines = [f"当前步骤：{step.description}"]
     if step.expected_output:
@@ -159,6 +181,11 @@ async def _execute_with_llm(
     execution_log: list[str],
     max_tool_turns: int,
     tool_error: str | None = None,
+    targets=None,
+    usage_sink: TokenUsage | None = None,
+    provider: str | None = None,
+    timeout_seconds: float | None = None,
+    max_output_chars: int | None = None,
 ) -> StepResult:
     on_tool_call, on_tool_result = _tool_callbacks(tracer, index)
     system_message = {"role": "system", "content": STEP_EXECUTOR_SYSTEM_PROMPT}
@@ -178,7 +205,11 @@ async def _execute_with_llm(
         step_index=index,
         input_data={"messages": [system_message, user_message]},
     ) as record:
+        before = snapshot_usage(usage_sink) if usage_sink is not None else None
         try:
+            circuit_target = (
+                (targets[0].provider, targets[0].base_url) if targets else None
+            )
             history, content = await run_tool_loop(
                 client,
                 model,
@@ -187,15 +218,42 @@ async def _execute_with_llm(
                 max_turns=max_tool_turns,
                 on_tool_call=on_tool_call,
                 on_tool_result=on_tool_result,
+                circuit_target=circuit_target,
+                timeout_seconds=timeout_seconds,
+                max_output_chars=max_output_chars,
+                usage_sink=usage_sink,
+                provider=provider,
             )
             if content is None:
                 # 工具轮数耗尽等场景，回退到一次不带工具的普通请求
-                fallback = await client.chat.completions.create(
-                    model=model,
-                    messages=history,
-                )
+                if targets:
+                    result = await complete(targets, messages=history)
+                    fallback, used_target = result.response, result.target
+                    accumulate_usage(
+                        usage_sink,
+                        getattr(fallback, "usage", None),
+                        model=used_target.model,
+                        provider=used_target.provider,
+                    )
+                else:
+                    fallback = await client.chat.completions.create(
+                        model=model,
+                        messages=history,
+                    )
+                    accumulate_usage(
+                        usage_sink,
+                        getattr(fallback, "usage", None),
+                        model=model,
+                        provider=provider,
+                    )
                 content = fallback.choices[0].message.content or ""
-            record.set({"output": content, "history_length": len(history)})
+            record.set(
+                {
+                    "output": content,
+                    "history_length": len(history),
+                    **_usage_delta(before, usage_sink, provider),
+                }
+            )
             return StepResult(
                 index=index,
                 step=step,
@@ -222,11 +280,28 @@ async def execute_step(
     tracer=None,
     execution_log: list[str] | None = None,
     max_tool_turns: int = 5,
+    targets=None,
+    usage_sink: TokenUsage | None = None,
+    provider: str | None = None,
+    timeout_seconds: float | None = None,
+    max_output_chars: int | None = None,
 ) -> StepResult:
     if tracer is None:
         tracer = NullTracer()
+    if timeout_seconds is None:
+        timeout_seconds = settings.agent_tool_timeout_seconds
+    if max_output_chars is None:
+        max_output_chars = settings.agent_tool_output_max_chars
+
     if step.tool and step.tool in TOOL_REGISTRY:
-        result = await _execute_direct_tool(step, index, context, tracer)
+        result = await _execute_direct_tool(
+            step,
+            index,
+            context,
+            tracer,
+            timeout_seconds=timeout_seconds,
+            max_output_chars=max_output_chars,
+        )
         if result.status == "failed" and result.error:
             # 自愈：工具调用失败（通常是参数错误），带着错误信息让 LLM 重试一次
             return await _execute_with_llm(
@@ -239,6 +314,11 @@ async def execute_step(
                 execution_log or [],
                 max_tool_turns,
                 tool_error=result.error,
+                targets=targets,
+                usage_sink=usage_sink,
+                provider=provider,
+                timeout_seconds=timeout_seconds,
+                max_output_chars=max_output_chars,
             )
         return result
     return await _execute_with_llm(
@@ -250,4 +330,9 @@ async def execute_step(
         tracer,
         execution_log or [],
         max_tool_turns,
+        targets=targets,
+        usage_sink=usage_sink,
+        provider=provider,
+        timeout_seconds=timeout_seconds,
+        max_output_chars=max_output_chars,
     )

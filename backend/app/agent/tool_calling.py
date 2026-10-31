@@ -36,6 +36,7 @@ from ..chat.schemas import StreamDeltaEvent, StreamUsageEvent, TokenUsage
 from ..core.config import settings
 from ..core.retry import create_chat_completion_with_retry
 from ..tools import ALL_TOOLS, TOOL_REGISTRY
+from .usage import accumulate_usage
 
 logger = logging.getLogger(__name__)
 
@@ -107,12 +108,28 @@ async def _tool_error(
     )
 
 
+def _limit_output(content: str, max_chars: int | None) -> str:
+    """工具结果过大时截断成合法 JSON，避免把上下文撑爆。"""
+    if not max_chars or len(content) <= max_chars:
+        return content
+    return json.dumps(
+        {
+            "truncated": True,
+            "limit": max_chars,
+            "preview": content[:max_chars],
+        },
+        ensure_ascii=False,
+    )
+
+
 async def execute_tool_call(
     tool_call,
     context: dict | None = None,
     *,
     on_tool_call: Callable[..., Any] | None = None,
     on_tool_result: Callable[..., Any] | None = None,
+    timeout_seconds: float | None = None,
+    max_output_chars: int | None = None,
 ) -> str:
     """执行单个工具调用，返回给模型看的 JSON 字符串结果。
 
@@ -168,7 +185,11 @@ async def execute_tool_call(
 
     started_at = perf_counter()
     try:
-        result = await _call_tool(func, args, context)
+        call = _call_tool(func, args, context)
+        if timeout_seconds:
+            result = await asyncio.wait_for(call, timeout=timeout_seconds)
+        else:
+            result = await call
         logger.info("工具调用成功: %s", name)
         if on_tool_result:
             await on_tool_result(
@@ -177,22 +198,47 @@ async def execute_tool_call(
                 result,
                 duration_ms=int((perf_counter() - started_at) * 1000),
             )
-        return json.dumps(result, ensure_ascii=False)
+        return _limit_output(json.dumps(result, ensure_ascii=False), max_output_chars)
+    except asyncio.TimeoutError:
+        logger.warning("工具 %s 执行超时（>%ss）", name, timeout_seconds)
+        return _limit_output(
+            await _tool_error(
+                call_id,
+                name,
+                f"工具执行超时（>{timeout_seconds} 秒）",
+                "ToolTimeout",
+                on_tool_result=on_tool_result,
+                duration_ms=int((perf_counter() - started_at) * 1000),
+                tool=name,
+            ),
+            max_output_chars,
+        )
     except Exception as error:  # noqa: BLE001
         # 把异常变成 JSON 回传给模型，模型能理解错误并决定是否修正参数重试
         logger.warning("工具 %s 执行失败: %s", name, error)
-        return await _tool_error(
-            call_id,
-            name,
-            str(error),
-            type(error).__name__,
-            on_tool_result=on_tool_result,
-            duration_ms=int((perf_counter() - started_at) * 1000),
-            tool=name,
+        return _limit_output(
+            await _tool_error(
+                call_id,
+                name,
+                str(error),
+                type(error).__name__,
+                on_tool_result=on_tool_result,
+                duration_ms=int((perf_counter() - started_at) * 1000),
+                tool=name,
+            ),
+            max_output_chars,
         )
 
 
-async def _run_tool_calls(tool_calls, context, on_tool_call, on_tool_result) -> list[str]:
+async def _run_tool_calls(
+    tool_calls,
+    context,
+    on_tool_call,
+    on_tool_result,
+    *,
+    timeout_seconds: float | None = None,
+    max_output_chars: int | None = None,
+) -> list[str]:
     """并行执行一轮里的多个工具调用，返回与 tool_calls 同序的结果列表。
 
     模型一次给出多个调用时（比如同时查天气和搜索网页），这些调用之间通常
@@ -207,6 +253,8 @@ async def _run_tool_calls(tool_calls, context, on_tool_call, on_tool_result) -> 
                 context,
                 on_tool_call=on_tool_call,
                 on_tool_result=on_tool_result,
+                timeout_seconds=timeout_seconds,
+                max_output_chars=max_output_chars,
             )
             for tool_call in tool_calls
         ]
@@ -222,6 +270,10 @@ async def run_tool_loop(
     on_tool_call: Callable[..., Any] | None = None,
     on_tool_result: Callable[..., Any] | None = None,
     circuit_target: tuple[str, str] | None = None,
+    timeout_seconds: float | None = None,
+    max_output_chars: int | None = None,
+    usage_sink: TokenUsage | None = None,
+    provider: str | None = None,
 ):
     """
     非流式工具调用循环（用于普通聊天接口）。
@@ -244,6 +296,13 @@ async def run_tool_loop(
         if settings.llm_max_output_tokens:
             kwargs["max_tokens"] = settings.llm_max_output_tokens
         response = await create_chat_completion_with_retry(client, **kwargs)
+        if usage_sink is not None:
+            accumulate_usage(
+                usage_sink,
+                getattr(response, "usage", None),
+                model=model,
+                provider=provider,
+            )
         message = response.choices[0].message
 
         # 模型不再调用工具，直接给出最终回答
@@ -253,7 +312,12 @@ async def run_tool_loop(
         # 模型的调用请求必须原样加入历史
         history.append(message)
         contents = await _run_tool_calls(
-            message.tool_calls, context, on_tool_call, on_tool_result
+            message.tool_calls,
+            context,
+            on_tool_call,
+            on_tool_result,
+            timeout_seconds=timeout_seconds,
+            max_output_chars=max_output_chars,
         )
         history.extend(
             {

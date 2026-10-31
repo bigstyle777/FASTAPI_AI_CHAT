@@ -34,6 +34,17 @@ def is_retryable_llm_error(error: Exception) -> bool:
     return isinstance(error, _RETRYABLE_ERRORS)
 
 
+def is_switchable_target_error(error: Exception) -> bool:
+    """这个错误是否值得换备用目标再试一次。
+
+    熔断打开说明主目标已经明确不可用，立即换；可重试类错误在重试
+    耗尽后也说明主目标这轮不行了。401/400 换目标只会失败得更慢。
+    """
+    return isinstance(error, circuit_breaker.CircuitOpenError) or is_retryable_llm_error(
+        error
+    )
+
+
 async def call_with_retry(
     fn: Callable[[], Awaitable[T]],
     *,

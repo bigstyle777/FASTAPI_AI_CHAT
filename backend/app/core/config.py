@@ -48,6 +48,16 @@ class Settings(BaseSettings):
     # 进程内同时运行的最大生成数。打满后新请求直接拒绝而不是排队，
     # 排队只会把上游超时和内存压力往后推。
     chat_max_concurrent_generations: int = 20
+    # ---- Agent 工程化（阶段 3）----
+    # 整轮软超时：在步骤边界/流式 token 边界检查，超时后停止后续步骤但仍总结
+    agent_run_timeout_seconds: int = 120
+    agent_max_concurrent_runs: int = 4
+    # 单个工具执行超时；超时当作工具失败，交给模型修正
+    agent_tool_timeout_seconds: int = 15
+    # 单个工具返回结果的最大字符数，超出截断并标注
+    agent_tool_output_max_chars: int = 4000
+    # 规划最多尝试次数（含首次）；解析失败才重试
+    agent_planner_max_attempts: int = 2
     stop_generation_ttl_seconds: int = 60 * 5
     bootstrap_admin_username: str | None = "admin"
     bootstrap_admin_password: str | None = "admin123456"

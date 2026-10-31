@@ -2,7 +2,7 @@
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -19,10 +19,22 @@ Database = Annotated[Session, Depends(get_db)]
 
 
 @router.post("/stream")
-async def agent_stream(request: ChatRequest, user: CurrentUser, db: Database):
+async def agent_stream(
+    payload: ChatRequest,
+    request: Request,
+    user: CurrentUser,
+    db: Database,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+):
     """流式运行一个 agent：规划 -> 逐步执行 -> 总结，全程 SSE 推送。"""
     return StreamingResponse(
-        agent_stream_service(db, user, request),
+        agent_stream_service(
+            db,
+            user,
+            payload,
+            is_disconnected=request.is_disconnected,
+            idempotency_key=idempotency_key,
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

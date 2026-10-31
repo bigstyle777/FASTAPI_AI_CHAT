@@ -1,5 +1,6 @@
 """Agent 的 HTTP 服务层：接收请求、串起主循环、落库并输出 SSE。"""
 
+import asyncio
 import logging
 from time import perf_counter
 from typing import AsyncGenerator
@@ -16,38 +17,70 @@ from ..chat.services.message_persistence import (
     persist_assistant_message,
     persist_user_message,
 )
-from ..core.ai_client import get_async_client, get_user_ai_settings
+from ..core.ai_client import get_async_client_for, get_user_ai_settings, resolve_model_targets
 from ..core.blocking import run_blocking
 from ..core.cache import (
     check_rate_limit,
     clear_generation_status,
     is_stop_requested,
 )
+from ..core.config import settings
 from ..core.sse import sse_event
 from ..core.exceptions import BusinessError
-from ..core.stop_signal import StopWatcher, clear_stopped, is_stopped_locally
+from ..core.stop_signal import (
+    StopWatcher,
+    clear_stopped,
+    is_stopped_locally,
+    mark_stopped,
+)
 from ..task.memory_queue import enqueue_memory_extraction
 from ..usage.service import budget_rejection_message, safe_record
 from .agent import run_agent_stream
 from .events import AgentDoneEvent, AgentPlanEvent
-from .repo import create_agent_run, update_agent_run
+from .repo import (
+    create_agent_run,
+    get_agent_run_by_idempotency,
+    get_running_agent_run,
+    update_agent_run,
+)
 from .state import AgentState
 from .trace import AgentTracer
 
 logger = logging.getLogger(__name__)
 
+# 断连检测降频到每秒一次，避免每个 token 都付一次 receive 轮询
+_DISCONNECT_CHECK_INTERVAL_SECONDS = 1.0
 
-def _resolve_run_status(failed: bool, session_id: int) -> str:
-    """收尾时判断这一轮算"完成"还是"被停止"。
+# 进程内同时运行的 Agent 数闸门。打满即拒绝、不排队：排队只是把上游
+# 超时和内存压力往后推，前端看到的仍然是"卡住"。
+_agent_slots = asyncio.Semaphore(settings.agent_max_concurrent_runs)
 
-    只看进程内标记就够了：真被停掉的话，流式循环里早就标上了；
-    没必要为了这个判断再查一次 Redis。
+_AGENT_BUSY_MESSAGE = "当前已有 Agent 任务正在运行，请等待完成或先停止"
+_DUPLICATE_MESSAGE = "该请求已提交，请勿重复"
+
+
+def _resolve_run_status(outcome: "_RunOutcome", session_id: int) -> str:
+    """收尾时判断这一轮算哪种终态。
+
+    主循环会产出带 status 的 AgentState；没走到那一步（规划就失败）
+    时按错误标记/停止标记兜底。
     """
-    if failed:
+    state = outcome.final_state
+    if state is not None and state.status in ("completed", "failed", "stopped", "timed_out"):
+        return state.status
+    if outcome.error_message:
         return "failed"
     if is_stopped_locally(session_id):
         return "stopped"
     return "completed"
+
+
+_LEDGER_STATUS = {
+    "completed": "success",
+    "stopped": "cancelled",
+    "timed_out": "failed",
+    "failed": "failed",
+}
 
 
 class _RunOutcome:
@@ -91,9 +124,47 @@ class _RunOutcome:
 
 
 async def agent_stream_service(
-    db: Session, user: dict, request
+    db: Session,
+    user: dict,
+    request,
+    *,
+    is_disconnected=None,
+    idempotency_key: str | None = None,
 ) -> AsyncGenerator[str, None]:
-    """POST /agent/stream 的 SSE 生成器。"""
+    """POST /agent/stream 的 SSE 生成器。
+
+    全局并发闸门放在这里而不是路由层：被拒时仍以 SSE 错误事件返回，
+    前端能正常收尾。
+    """
+    if _agent_slots.locked():
+        yield sse_event(
+            "error",
+            StreamErrorEvent(message="当前 Agent 请求过多，请稍后再试"),
+        )
+        return
+
+    await _agent_slots.acquire()
+    try:
+        async for event in _agent_stream_inner(
+            db,
+            user,
+            request,
+            is_disconnected=is_disconnected,
+            idempotency_key=idempotency_key,
+        ):
+            yield event
+    finally:
+        _agent_slots.release()
+
+
+async def _agent_stream_inner(
+    db: Session,
+    user: dict,
+    request,
+    *,
+    is_disconnected=None,
+    idempotency_key: str | None = None,
+) -> AsyncGenerator[str, None]:
     user_id = user["user_id"]
     session_id = request.session_id
     started_at = perf_counter()
@@ -113,6 +184,17 @@ async def agent_stream_service(
         yield sse_event("error", StreamErrorEvent(message=rejection))
         return
 
+    try:
+        message = request.message.strip()
+        if not message:
+            raise BusinessError("消息不能为空")
+        session = await run_blocking(get_session_by_user, db, session_id, user_id)
+        if not session:
+            raise BusinessError("会话不存在或已删除")
+    except BusinessError as error:
+        yield sse_event("error", StreamErrorEvent(message=str(error.message)))
+        return
+
     await run_blocking(clear_generation_status, session_id)
     # 清掉上一轮可能残留的标记，避免它一直堵着这个会话
     clear_stopped(session_id)
@@ -123,12 +205,33 @@ async def agent_stream_service(
     tracer = None
 
     try:
-        message = request.message.strip()
-        if not message:
-            raise BusinessError("消息不能为空")
-        session = await run_blocking(get_session_by_user, db, session_id, user_id)
-        if not session:
-            raise BusinessError("会话不存在或已删除")
+        # 幂等判重：双击/断网重试/刷新重发只跑一次、只扣一次费。
+        # 唯一索引兜底并发竞态（create_agent_run 返回 None）。
+        if idempotency_key:
+            existing = await run_blocking(
+                get_agent_run_by_idempotency, db, idempotency_key
+            )
+            if existing is not None:
+                yield sse_event("error", StreamErrorEvent(message=_DUPLICATE_MESSAGE))
+                return
+
+        # 每用户同时只允许一个 Agent 运行
+        if await run_blocking(get_running_agent_run, db, user_id) is not None:
+            yield sse_event("error", StreamErrorEvent(message=_AGENT_BUSY_MESSAGE))
+            return
+
+        run = await run_blocking(
+            create_agent_run,
+            db,
+            session_id=session_id,
+            user_id=user_id,
+            user_input=message,
+            idempotency_key=idempotency_key,
+        )
+        if run is None:
+            yield sse_event("error", StreamErrorEvent(message=_DUPLICATE_MESSAGE))
+            return
+        tracer = AgentTracer(db, run.id)
 
         user_message = await run_blocking(
             persist_user_message, db, user_id, session_id, message
@@ -145,23 +248,35 @@ async def agent_stream_service(
         )
         messages = memory_messages + history_messages
 
-        run = await run_blocking(
-            create_agent_run,
-            db,
-            session_id=session_id,
-            user_id=user_id,
-            user_input=message,
-        )
-        tracer = AgentTracer(db, run.id)
-
         api_key, provider = await run_blocking(get_user_ai_settings, user_id=user_id, db=db)
-        result = get_async_client(api_key=api_key, provider=provider)
-        if not result:
+        targets = resolve_model_targets(api_key=api_key, provider=provider)
+        if not targets:
             raise BusinessError("当前 AI 服务暂不可用，请先在个人中心配置 API Key")
-        client, model = result
+        client = get_async_client_for(targets[0])
+        if client is None:
+            raise BusinessError("当前 AI 服务暂不可用，请先在个人中心配置 API Key")
+        model = targets[0].model
+
+        # 断连与"用户点停止"合并成一个 should_stop：断连降频检查后
+        # 直接标记停止，主循环下一次检查就会退出并正常收尾落库。
+        next_disconnect_check = [0.0]
+
+        async def should_stop() -> bool:
+            if await stop_watcher.should_stop():
+                return True
+            if is_disconnected is not None:
+                now = perf_counter()
+                if now >= next_disconnect_check[0]:
+                    next_disconnect_check[0] = now + _DISCONNECT_CHECK_INTERVAL_SECONDS
+                    if await is_disconnected():
+                        logger.info("会话 %s 客户端断连，停止 Agent", session_id)
+                        mark_stopped(session_id)
+                        return True
+            return False
 
         context = {"db": db, "user_id": user_id}
         outcome = _RunOutcome()
+        deadline = perf_counter() + settings.agent_run_timeout_seconds
 
         async for event in run_agent_stream(
             client,
@@ -170,14 +285,19 @@ async def agent_stream_service(
             messages=messages,
             context=context,
             tracer=tracer,
-            should_stop=stop_watcher.should_stop,
+            should_stop=should_stop,
+            targets=targets,
+            provider=provider,
+            deadline=deadline,
         ):
             outcome.record(event)
             if isinstance(event, AgentState):
                 continue
             yield sse_event(event.type, event)
 
-        status = _resolve_run_status(outcome.failed, session_id)
+        status = _resolve_run_status(outcome, session_id)
+        used_model = outcome.usage.model or model
+        used_provider = outcome.usage.provider or provider
         await run_blocking(
             update_agent_run,
             db,
@@ -185,7 +305,7 @@ async def agent_stream_service(
             status=status,
             plan=outcome.plan,
             final_answer=outcome.ai_reply,
-            model=outcome.usage.model or model,
+            model=used_model,
             prompt_tokens=outcome.usage.prompt_tokens,
             completion_tokens=outcome.usage.completion_tokens,
             total_tokens=outcome.usage.total_tokens,
@@ -197,10 +317,10 @@ async def agent_stream_service(
             user_id=user_id,
             session_id=session_id,
             scene="agent",
-            provider=provider or "",
-            model=outcome.usage.model or model,
+            provider=used_provider or "",
+            model=used_model,
             usage=outcome.usage,
-            status={"completed": "success", "stopped": "cancelled"}.get(status, "failed"),
+            status=_LEDGER_STATUS.get(status, "failed"),
             latency_ms=int((perf_counter() - started_at) * 1000),
             error=outcome.resolved_error_message(),
         )
@@ -211,7 +331,7 @@ async def agent_stream_service(
                 db,
                 session_id,
                 outcome.ai_reply,
-                model=outcome.usage.model or model,
+                model=used_model,
                 prompt_tokens=outcome.usage.prompt_tokens,
                 completion_tokens=outcome.usage.completion_tokens,
                 total_tokens=outcome.usage.total_tokens,
@@ -228,6 +348,7 @@ async def agent_stream_service(
     except Exception as error:
         logger.exception("Agent 运行失败")
         clear_stopped(session_id)
+        await run_blocking(clear_generation_status, session_id)
         if tracer is not None and run is not None:
             await tracer.point(
                 "error",

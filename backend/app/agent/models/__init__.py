@@ -28,6 +28,10 @@ class AgentRun(Base):
         nullable=False,
     )
     user_input: Mapped[str] = mapped_column(Text, nullable=False)
+    # 幂等键：同一用户意图（双击/重试）只跑一次；可空兼容无键路径
+    idempotency_key: Mapped[str | None] = mapped_column(
+        String(64), unique=True, nullable=True
+    )
     plan: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     final_answer: Mapped[str | None] = mapped_column(Text, nullable=True)
     model: Mapped[str | None] = mapped_column(String(120), nullable=True)
