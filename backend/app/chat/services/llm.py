@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from ...agent.tool_calling import run_tool_loop, stream_with_tools
 from ...core.ai_client import get_async_client, get_user_ai_settings
 from ...core.blocking import run_blocking
+from ...core.retry import create_chat_completion_with_retry
 from ..schemas import StreamErrorEvent
 
 
@@ -39,10 +40,9 @@ async def chat_with_ai(messages: list, user_id=None, db=None):
         if content is not None:
             return content
 
-        # 兜底: 普通对话请求
-        response = await client.chat.completions.create(
-            model=model,
-            messages=history,
+        # 兜底: 普通对话请求（非流式，整体可安全重试）
+        response = await create_chat_completion_with_retry(
+            client, model=model, messages=history
         )
         content = response.choices[0].message.content
         return content or _build_fallback_reply(messages, api_key=api_key)

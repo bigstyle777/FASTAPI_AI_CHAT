@@ -33,6 +33,7 @@ from typing import Any, AsyncGenerator, Callable
 from starlette.concurrency import run_in_threadpool
 
 from ..chat.schemas import StreamDeltaEvent, StreamUsageEvent, TokenUsage
+from ..core.retry import create_chat_completion_with_retry
 from ..tools import ALL_TOOLS, TOOL_REGISTRY
 
 logger = logging.getLogger(__name__)
@@ -232,10 +233,8 @@ async def run_tool_loop(
 
     history = [dict(m) for m in messages]
     for _ in range(max_turns):
-        response = await client.chat.completions.create(
-            model=model,
-            messages=history,
-            tools=ALL_TOOLS,
+        response = await create_chat_completion_with_retry(
+            client, model=model, messages=history, tools=ALL_TOOLS
         )
         message = response.choices[0].message
 
@@ -364,11 +363,16 @@ async def stream_with_tools(
         if use_tools:
             kwargs["tools"] = ALL_TOOLS
 
-        response = await client.chat.completions.create(**kwargs)
+        # 只重试 create() 建连阶段；流式消费中途的断流不重试（core/retry.py）
+        response = await create_chat_completion_with_retry(client, **kwargs)
 
         round_result = _StreamRound()
-        async for event in _consume_stream_round(response, round_result):
-            yield event
+        try:
+            async for event in _consume_stream_round(response, round_result):
+                yield event
+        finally:
+            # 消费方中断（停止/超时）时显式关闭上游 HTTP 连接，不等 GC
+            await response.close()
 
         # 这一轮流里有工具调用请求，执行后带着结果继续下一轮
         if round_result.tool_call_parts and use_tools:

@@ -36,8 +36,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
       POSTGRES_DB: aichat
     ports:
-      # 仅本机回环（本地调试用）；生产环境可整体移除该映射
-      - "127.0.0.1:5432:5432"
+      # 仅本机回环（本地调试用）；生产环境可整体移除该映射。
+      # 用 55432 而非 5432：WSL 的 wslrelay 与 Docker 代理会抢占 5432，导致连接随机失败
+      - "127.0.0.1:55432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:

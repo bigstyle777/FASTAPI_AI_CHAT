@@ -10,6 +10,7 @@ agent.planner 模块测试脚本
   默认取第一个在个人中心配置了 API Key 的用户
 """
 
+import asyncio
 import os
 import sys
 from pathlib import Path
@@ -68,15 +69,19 @@ def pick_test_user(db):
     return user
 
 
-def test_create_plan(client, model):
-    """测试 create_plan：调用真实 LLM 生成计划，并打印解析后的步骤"""
+def _run_create_plan(client, model):
+    """手动联调用例：调用真实 LLM 生成计划，并打印解析后的步骤。
+
+    会打真实模型、依赖库里已配置 Key 的用户，所以不命名为 test_*，
+    避免被 pytest 自动收集进自动化测试。
+    """
     print("=" * 60)
     print("create_plan（使用 setting 里的 client + model）")
     print("=" * 60)
 
     for task in TEST_TASKS:
         messages = [{"role": "user", "content": task}]
-        plan = create_plan(client, model, messages)
+        plan = asyncio.run(create_plan(client, model, messages))
 
         print(f"\n任务: {task}")
         print(f"解析成功，共 {len(plan)} 个步骤:")
@@ -104,7 +109,7 @@ def main():
         print(f"model: {model}")
         print(f"api_key: {(api_key or '')[:6]}...(已脱敏)" if api_key else "api_key: 使用 .env 兜底")
 
-        test_create_plan(client, model)
+        _run_create_plan(client, model)
     finally:
         db.close()
 

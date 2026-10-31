@@ -9,10 +9,23 @@ except Exception:  # pragma: no cover - optional dependency fallback
     AsyncOpenAI = None
     OpenAI = None
 
+import httpx
 from sqlalchemy.orm import Session
 
 from ..user.repository import get_user_settings
 from .config import settings
+
+
+def _llm_timeout() -> httpx.Timeout:
+    """LLM 调用的超时：连接单独设短一点，让网络问题快速失败。
+
+    max_retries 统一关掉：重试走 core/retry.py，重试次数、退避、
+    错误分类都可观测可测试，而不是藏在 SDK 默认值里。
+    """
+    return httpx.Timeout(
+        settings.llm_request_timeout_seconds,
+        connect=settings.llm_connect_timeout_seconds,
+    )
 
 
 def _resolve_provider(api_key=None, provider="deepseek"):
@@ -39,7 +52,7 @@ def get_client(api_key=None, provider="deepseek"):
     if not key:
         return None
 
-    return OpenAI(api_key=key, base_url=base_url), model
+    return OpenAI(api_key=key, base_url=base_url, timeout=_llm_timeout(), max_retries=0), model
 
 
 def get_async_client(api_key=None, provider="deepseek"):
@@ -55,7 +68,7 @@ def get_async_client(api_key=None, provider="deepseek"):
     if not key:
         return None
 
-    return AsyncOpenAI(api_key=key, base_url=base_url), model
+    return AsyncOpenAI(api_key=key, base_url=base_url, timeout=_llm_timeout(), max_retries=0), model
 
 
 def get_user_ai_settings(user_id=None, db: Session | None = None):

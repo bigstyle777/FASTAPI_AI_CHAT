@@ -36,12 +36,14 @@ import app.memory.models  # noqa: E402,F401
 import app.rag.models  # noqa: E402,F401
 import app.user.models  # noqa: E402,F401
 from app.admin.repository import create_role, get_role_by_name  # noqa: E402
-from app.core.database import Base  # noqa: E402
+from app.core.database import DATABASE_URL, Base  # noqa: E402
 from app.user.repository import create_user  # noqa: E402
 
+# 默认沿用主库的连接参数（host/端口/密码都来自 .env），只把库名换成测试库：
+# 本地无需额外导出环境变量，CI 里仍可用 TEST_DATABASE_URL 覆盖
 TEST_DATABASE_URL = os.getenv(
     "TEST_DATABASE_URL",
-    "postgresql+psycopg://postgres:postgres@localhost:5432/aichat_test",
+    DATABASE_URL.rsplit("/", 1)[0] + "/aichat_test",
 )
 
 

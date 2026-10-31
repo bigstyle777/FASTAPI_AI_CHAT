@@ -1,6 +1,6 @@
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -105,10 +105,17 @@ def delete_message_api(message_id: int, user: CurrentUser, db: Database):
 
 @router.put("/messages/{message_id}/stream")
 async def modify_message_api(
-    message_id: int, request: MessageUpdateRequest, user: CurrentUser, db: Database
+    message_id: int,
+    request: MessageUpdateRequest,
+    user: CurrentUser,
+    db: Database,
+    raw_request: Request,
 ):
     return StreamingResponse(
-        modify_message_service(db, user, message_id, request.content),
+        modify_message_service(
+            db, user, message_id, request.content,
+            is_disconnected=raw_request.is_disconnected,
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -123,9 +130,17 @@ async def chat_stream(
     request: ChatRequest,
     user: CurrentUser,
     db: Database,
+    raw_request: Request,
+    idempotency_key: Annotated[str | None, Header()] = None,
 ):
+    # Idempotency-Key：前端对同一次"发送"意图（含双击/自动重试/刷新重发）
+    # 复用同一个 UUID，服务端保证只生成一次
     return StreamingResponse(
-        send_message_stream_service(db, user, request),
+        send_message_stream_service(
+            db, user, request,
+            idempotency_key=idempotency_key,
+            is_disconnected=raw_request.is_disconnected,
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

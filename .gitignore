@@ -21,3 +21,6 @@ Thumbs.db
 node_modules/
 dist/
 build/
+# 本地工具（AI 助手/会话钩子）产生的状态文件，不属于工程产物
+.mimosa/
+.workbuddy/

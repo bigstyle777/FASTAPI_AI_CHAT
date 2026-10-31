@@ -10,6 +10,7 @@
     ..\\.venv\\Scripts\\python.exe -m pytest tests\\test_trace.py -v
 """
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -47,6 +48,10 @@ def _points_of(db, run_id):
     return get_trace_points(db, run_id)
 
 
+def _run(coro):
+    return asyncio.run(coro)
+
+
 # ---------------------------------------------------------------------------
 # point()
 # ---------------------------------------------------------------------------
@@ -56,8 +61,11 @@ def test_point_persists_record_with_increasing_sequence(db):
     run = _make_run(db)
     tracer = AgentTracer(db, run.id)
 
-    tracer.point("plan", "planner", status="started")
-    tracer.point("plan", "planner", status="completed", duration_ms=12)
+    async def scenario():
+        await tracer.point("plan", "planner", status="started")
+        await tracer.point("plan", "planner", status="completed", duration_ms=12)
+
+    _run(scenario())
 
     points = _points_of(db, run.id)
     assert [p.sequence for p in points] == [0, 1]
@@ -76,8 +84,11 @@ def test_span_records_started_and_completed(db):
     run = _make_run(db)
     tracer = AgentTracer(db, run.id)
 
-    with tracer.span("step", "step_0", step_index=0) as record:
-        record.set({"output": "ok"})
+    async def scenario():
+        async with tracer.span("step", "step_0", step_index=0) as record:
+            record.set({"output": "ok"})
+
+    _run(scenario())
 
     points = _points_of(db, run.id)
     assert [p.status for p in points] == ["started", "completed"]
@@ -89,9 +100,12 @@ def test_span_records_failed_and_reraises(db):
     run = _make_run(db)
     tracer = AgentTracer(db, run.id)
 
-    with pytest.raises(ValueError, match="boom"):
-        with tracer.span("llm", "step_0_llm"):
+    async def scenario():
+        async with tracer.span("llm", "step_0_llm"):
             raise ValueError("boom")
+
+    with pytest.raises(ValueError, match="boom"):
+        _run(scenario())
 
     points = _points_of(db, run.id)
     assert [p.status for p in points] == ["started", "failed"]
@@ -104,8 +118,11 @@ def test_span_fail_record_marks_failed_without_exception(db):
     run = _make_run(db)
     tracer = AgentTracer(db, run.id)
 
-    with tracer.span("tool_call", "calculator") as record:
-        record.fail("参数错误")
+    async def scenario():
+        async with tracer.span("tool_call", "calculator") as record:
+            record.fail("参数错误")
+
+    _run(scenario())
 
     points = _points_of(db, run.id)
     assert [p.status for p in points] == ["started", "failed"]
@@ -136,14 +153,17 @@ def test_emit_then_drain_returns_and_clears(db):
 def test_null_tracer_noop_and_propagates_exceptions():
     tracer = NullTracer(run_id=0)
 
-    assert tracer.point("any", "thing") is None
+    assert _run(tracer.point("any", "thing")) is None
     tracer.emit({"type": "agent_tool"})
     assert tracer.drain_events() == []
 
-    with pytest.raises(RuntimeError, match="boom"):
-        with tracer.span("step", "step_0") as record:
+    async def scenario():
+        async with tracer.span("step", "step_0") as record:
             record.set({"ok": True})
             raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        _run(scenario())
 
     # 不落库（run_id=0 在数据库里不存在对应记录，天然无法验证行数，
     # 这里验证 NullTracer 的 API 形状与 AgentTracer 一致）

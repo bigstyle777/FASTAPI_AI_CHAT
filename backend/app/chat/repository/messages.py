@@ -172,3 +172,18 @@ def get_last_message_by_session(db, session_id):
         .limit(1)
     )
     return db.execute(stmt).scalar_one_or_none()
+
+
+def get_assistant_message_by_parent(db, session_id, parent_message_id):
+    """查某条用户消息对应的 assistant 回复（幂等重放用）。"""
+    stmt = (
+        select(Message)
+        .where(
+            Message.session_id == session_id,
+            Message.parent_id == parent_message_id,
+            Message.role == "assistant",
+        )
+        .order_by(Message.id.desc())
+        .limit(1)
+    )
+    return db.execute(stmt).scalar_one_or_none()

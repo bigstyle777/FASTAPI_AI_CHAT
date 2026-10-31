@@ -190,9 +190,19 @@ def test_run_tool_loop_executes_tool_then_final_answer(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-async def _astream(items):
-    for item in items:
-        yield item
+class _FakeStream:
+    """模拟 openai AsyncStream：可异步迭代、可 close（stream_with_tools 会显式关闭）。"""
+
+    def __init__(self, items):
+        self._items = items
+        self.closed = False
+
+    async def __aiter__(self):
+        for item in self._items:
+            yield item
+
+    async def close(self):
+        self.closed = True
 
 
 def _stream_chunk(content=None, tool_calls=None, usage=None):
@@ -218,7 +228,7 @@ def test_stream_with_tools_aggregates_fragments_and_answers(monkeypatch):
         _stream_chunk(usage=usage),
     ]
 
-    completions = _ScriptedCompletions([_astream(round1), _astream(round2)])
+    completions = _ScriptedCompletions([_FakeStream(round1), _FakeStream(round2)])
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
 
     events = _run(
@@ -242,10 +252,11 @@ def test_stream_with_tools_aggregates_fragments_and_answers(monkeypatch):
 def test_stream_with_tools_plain_answer_without_tool_calls(monkeypatch):
     monkeypatch.setattr(tool_calling, "ALL_TOOLS", [{"type": "function", "function": {"name": "calculator"}}])
     usage = SimpleNamespace(prompt_tokens=1, completion_tokens=1, total_tokens=2)
-    async def chunks():
-        yield _stream_chunk(content="你好")
-        yield _stream_chunk(usage=usage)
-    client = SimpleNamespace(chat=SimpleNamespace(completions=_ScriptedCompletions([chunks()])))
+    chunks = _FakeStream([
+        _stream_chunk(content="你好"),
+        _stream_chunk(usage=usage),
+    ])
+    client = SimpleNamespace(chat=SimpleNamespace(completions=_ScriptedCompletions([chunks])))
 
     events = _run(
         _collect(stream_with_tools(client, "test-model", [{"role": "user", "content": "hi"}]))
@@ -258,10 +269,11 @@ def test_stream_with_tools_plain_answer_without_tool_calls(monkeypatch):
 def test_stream_with_tools_without_tools_single_round(monkeypatch):
     monkeypatch.setattr(tool_calling, "ALL_TOOLS", [])
     usage = SimpleNamespace(prompt_tokens=1, completion_tokens=1, total_tokens=2)
-    async def chunks():
-        yield _stream_chunk(content="ok")
-        yield _stream_chunk(usage=usage)
-    completions = _ScriptedCompletions([chunks()])
+    chunks = _FakeStream([
+        _stream_chunk(content="ok"),
+        _stream_chunk(usage=usage),
+    ])
+    completions = _ScriptedCompletions([chunks])
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
 
     events = _run(
@@ -331,7 +343,7 @@ def test_consume_stream_round_returns_aggregated_result():
 
     async def feed():
         generator = _consume_stream_round(
-            _astream(
+            _FakeStream(
                 [
                     _stream_chunk(content="你好"),
                     _stream_chunk(

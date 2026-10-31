@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     # 喂给模型的历史字符预算。只限条数不够：20 条可能是 20 句闲聊，
     # 也可能是 20 段长文，后者照样把 prompt 撑爆，所以再压一道字符上限。
     chat_context_max_chars: int = 12000
+    # 单用户每小时的聊天请求上限（频率限流，和"同时运行数"是两回事）
+    chat_rate_limit_per_hour: int = 500
+    # 进程内同时运行的最大生成数。打满后新请求直接拒绝而不是排队，
+    # 排队只会把上游超时和内存压力往后推。
+    chat_max_concurrent_generations: int = 20
     stop_generation_ttl_seconds: int = 60 * 5
     bootstrap_admin_username: str | None = "admin"
     bootstrap_admin_password: str | None = "admin123456"
@@ -74,6 +79,18 @@ class Settings(BaseSettings):
     # None 时使用默认的 calculator server）
     mcp_servers: str | None = None
     log_level: str = "INFO"
+
+    # ---- LLM 可靠性：超时与重试（阶段1A）----
+    # httpx 连接超时：TCP 建连超过即失败，让网络问题快速暴露
+    llm_connect_timeout_seconds: float = 5
+    # 单次 create() 调用的超时；流式场景下同时约束"两块数据之间的最长停顿"
+    llm_request_timeout_seconds: float = 60
+    # 一条流式生成从开始到主动放弃的总预算，超时按"用户停止"同等路径收场
+    llm_stream_max_seconds: float = 300
+    # 重试：指数退避 + 全抖动，只作用于建连阶段（见 core/retry.py）
+    llm_retry_max_attempts: int = 3
+    llm_retry_base_seconds: float = 0.5
+    llm_retry_cap_seconds: float = 4.0
 
     @model_validator(mode="after")
     def fill_derived_defaults(self):

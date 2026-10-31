@@ -11,6 +11,7 @@ from .admin.router import router as admin_router
 from .admin.service.rbac import ensure_bootstrap_admin, sync_default_rbac
 from .agent.router import router as agent_router
 from .chat.router import router as chat_router
+from .chat.services.generation import sweep_stale_generations
 from .core.config import settings
 from .core.database import SessionLocal
 from .core.logging import configure_logging, new_request_id, request_id_var
@@ -40,6 +41,8 @@ async def lifespan(app: FastAPI):
             settings.bootstrap_admin_username,
             settings.bootstrap_admin_password,
         )
+        # 崩溃恢复：上次进程死掉时遗留的假 RUNNING 任务落为 FAILED
+        sweep_stale_generations(db)
     # 启动时建立 MCP Server 连接（仅一次），发现的工具注册进现有工具体系；
     # 单个 server 失败只记录状态（get_unhealthy_servers 可查），
     # 不影响应用启动（本地工具与其他 server 仍可用）
