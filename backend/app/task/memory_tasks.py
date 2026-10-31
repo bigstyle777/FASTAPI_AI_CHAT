@@ -40,7 +40,7 @@ def extract_and_save_memory_task(
             "backfilled": backfilled,
         }
     except Exception:
-        logger.exception("提取并保存记忆后台任务失败")
+        logger.exception("提取并保存记忆后台任务失败 user_id=%s", user_id)
         return {"applied": [], "backfilled": 0}
     finally:
         db.close()

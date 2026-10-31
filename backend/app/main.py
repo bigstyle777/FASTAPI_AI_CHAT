@@ -5,7 +5,7 @@ from time import perf_counter
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from .agent.repo import sweep_stale_agent_runs
 from .admin.router import router as admin_router
@@ -15,7 +15,15 @@ from .chat.router import router as chat_router
 from .chat.services.generation import sweep_stale_generations
 from .core.config import settings
 from .core.database import SessionLocal
+from .core.health import router as health_router
+from .core.lifecycle import mark_shutting_down
 from .core.logging import configure_logging, new_request_id, request_id_var
+from .core.metrics import (
+    HTTP_DURATION,
+    HTTP_REQUESTS,
+    refresh_queue_length,
+    render as render_metrics,
+)
 from .core.redis import RedisUnavailableError
 from .core.exceptions import BusinessError
 from .memory.router import router as memory_router
@@ -59,6 +67,10 @@ async def lifespan(app: FastAPI):
 
     logger.info("应用启动完成，安全初始化已执行")
     yield
+    # 先置停机标志：SSE 主循环下一个检查点主动收尾并落库，
+    # 而不是被客户端断连或宽限期到点硬断
+    mark_shutting_down()
+    logger.info("应用进入停机流程，等待进行中的流式生成收尾")
     await mcp_manager.close_all()
 
 
@@ -104,11 +116,25 @@ app.add_middleware(
 
 
 app.include_router(rag_router)
+app.include_router(health_router)
 app.include_router(agent_router)
 app.include_router(users_router)
 app.include_router(chat_router)
 app.include_router(memory_router)
 app.include_router(admin_router)
+
+
+@app.get("/metrics")
+def metrics_endpoint():
+    """Prometheus 文本格式指标；默认只应部署在内网或由反代加访问控制。"""
+    if not settings.metrics_enabled:
+        return JSONResponse(
+            status_code=404, content={"success": False, "message": "metrics disabled"}
+        )
+    refresh_queue_length()
+    return PlainTextResponse(
+        render_metrics(), media_type="text/plain; version=0.0.4; charset=utf-8"
+    )
 
 
 async def _authenticate_request(request: Request) -> JSONResponse | None:
@@ -159,6 +185,11 @@ async def log_request(request, call_next):
             int((perf_counter() - started_at) * 1000),
             _resolved_user_id(request),
         )
+        # 用路由模板而不是实际路径，避免带 id 的 URL 把指标标签打爆
+        route_path = getattr(request.scope.get("route"), "path", request.url.path)
+        labels = {"method": request.method, "path": route_path}
+        HTTP_REQUESTS.inc({**labels, "status": response.status_code})
+        HTTP_DURATION.observe(perf_counter() - started_at, labels)
         return response
     finally:
         request_id_var.reset(token)

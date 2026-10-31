@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from ..core.cache import check_rate_limit
+from ..core.config import settings
 from ..core.database import get_db
 from .schemas import (
     CaptchaResponse,
@@ -37,12 +38,21 @@ REGISTER_RATE_LIMIT = 5     # 每 IP 每小时最多 5 次注册
 CAPTCHA_RATE_LIMIT = 30     # 每 IP 每分钟最多 30 次验证码请求
 
 
+def _is_trusted_proxy(client_ip: str) -> bool:
+    trusted = settings.trusted_proxy_ips_list
+    return "*" in trusted or client_ip in trusted
+
+
 def _get_client_ip(request: Request) -> str:
-    """获取客户端 IP，支持代理转发场景（X-Forwarded-For）。"""
+    """获取客户端 IP；仅当直连方是可信代理时才采信 X-Forwarded-For。
+
+    默认不信任转发头：否则任何人都能伪造 XFF 换 IP，绕过注册/验证码限流。
+    """
+    client_ip = request.client.host if request.client else "unknown"
     forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
+    if forwarded and _is_trusted_proxy(client_ip):
         return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    return client_ip
 
 
 def _check_auth_rate_limit(request: Request, endpoint: str, limit: int, expire_seconds: int):

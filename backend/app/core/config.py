@@ -122,6 +122,27 @@ class Settings(BaseSettings):
     # 全局每天的成本上限（元），0 表示不限制
     global_daily_cost_limit_yuan: float = 0
 
+    # ---- 阶段4：生产运维 ----
+    # DB 连接池：池大小/峰值溢出/回收周期；pre_ping 在取连接前探活，
+    # 规避数据库重启或中间网络设备空闲断连导致的"第一次查询必失败"。
+    database_pool_size: int = 10
+    database_max_overflow: int = 20
+    database_pool_recycle_seconds: int = 1800
+    database_pool_pre_ping: bool = True
+    # Celery：软超时可捕获并收尾，硬超时由 worker 强杀；RAG 任务有限重试
+    celery_task_soft_time_limit_seconds: int = 120
+    celery_task_time_limit_seconds: int = 180
+    celery_task_max_retries: int = 3
+    celery_retry_backoff_seconds: int = 10
+    # 队列积压超过该值只标记 degraded，不摘流（避免边缘抖动误伤）
+    celery_queue_backlog_threshold: int = 100
+    metrics_enabled: bool = True
+    log_json: bool = False
+    # 只有直连方 IP 在名单内才采信 X-Forwarded-For；"*" 表示全信任
+    trusted_proxy_ips: str = ""
+    # 停机宽限期：与 docker-compose / uvicorn 的 graceful shutdown 对齐
+    shutdown_grace_seconds: int = 30
+
     @model_validator(mode="after")
     def fill_derived_defaults(self):
         # Docker secrets 惯例：<FIELD>_FILE 指向只读文件时，优先读取文件内容作为密钥。
@@ -152,6 +173,11 @@ class Settings(BaseSettings):
     def is_default_jwt_secret(self) -> bool:
         """检测 JWT 密钥是否为不安全的默认值。"""
         return self.jwt_secret_key in ("myselectkey", "change-me", "")
+
+    @property
+    def trusted_proxy_ips_list(self) -> list[str]:
+        """将逗号分隔的可信代理 IP 解析为列表。"""
+        return [ip.strip() for ip in self.trusted_proxy_ips.split(",") if ip.strip()]
 
 
 @lru_cache(maxsize=1)

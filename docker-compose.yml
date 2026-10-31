@@ -71,7 +71,7 @@ services:
       - -c
       - |
         alembic -c backend/alembic.ini upgrade head
-        exec uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
+        exec uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --timeout-graceful-shutdown 30
     environment:
       # 容器网络内的服务地址，强制覆盖 .env 里的本地开发值；密码从 .env 注入
       DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD}@db:5432/aichat
@@ -102,11 +102,13 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/', timeout=5).raise_for_status()"]
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health/ready', timeout=5).raise_for_status()"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 15s
+    # 给 SSE 流式收尾留出时间：uvicorn 宽限期 30s，容器缓冲 10s
+    stop_grace_period: 40s
     # 纵深防御：非 root（见 Dockerfile）+ 丢弃全部 capability + 禁止提权 + 只读根文件系统
     security_opt:
       - no-new-privileges:true
@@ -161,6 +163,8 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+    # Celery 默认收到 SIGTERM 后 warm shutdown：等手里任务跑完再退出
+    stop_grace_period: 60s
     security_opt:
       - no-new-privileges:true
     cap_drop:

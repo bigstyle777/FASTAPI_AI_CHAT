@@ -12,6 +12,8 @@ Celery worker 默认会接管 root logger（worker_hijack_root_logger），
 worker 进程内的 ``logger.exception`` 由 celery 自行格式化输出，无需重复配置。
 """
 
+import datetime
+import json
 import logging
 import secrets
 import sys
@@ -44,6 +46,24 @@ class RequestContextFilter(logging.Filter):
         return True
 
 
+class JsonFormatter(logging.Formatter):
+    """一行一个 JSON 对象，便于日志采集系统解析。"""
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "timestamp": datetime.datetime.fromtimestamp(
+                record.created, tz=datetime.timezone.utc
+            ).isoformat(timespec="milliseconds"),
+            "level": record.levelname,
+            "logger": record.name,
+            "request_id": getattr(record, "request_id", "-"),
+            "message": record.getMessage(),
+        }
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        return json.dumps(payload, ensure_ascii=False)
+
+
 def configure_logging(level: str | None = None) -> None:
     """配置 root logger；重复调用只更新级别，不叠加 handler。"""
     from .config import settings
@@ -59,7 +79,10 @@ def configure_logging(level: str | None = None) -> None:
     ):
         handler = logging.StreamHandler(sys.stderr)
         handler._aichat_handler = True  # type: ignore[attr-defined]
-        handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT))
+        if settings.log_json:
+            handler.setFormatter(JsonFormatter())
+        else:
+            handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT))
         handler.addFilter(RequestContextFilter())
         root.addHandler(handler)
 

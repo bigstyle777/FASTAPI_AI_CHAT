@@ -14,12 +14,14 @@
 import asyncio
 import logging
 import random
+from time import perf_counter
 from typing import Awaitable, Callable, TypeVar
 
 from openai import APIConnectionError, InternalServerError, RateLimitError
 
 from . import circuit_breaker
 from .config import settings
+from .metrics import LLM_CALLS, LLM_DURATION
 
 logger = logging.getLogger(__name__)
 
@@ -94,12 +96,25 @@ async def create_chat_completion_with_retry(
 ):
     """包一层 chat.completions.create()：只重试"还没吐出 token"的建连阶段。
 
-    create() 返回之后的流式消费不在此重试（见模块 docstring 的保守策略）。
+    同时埋点：调用结果（success / 错误类型）与耗时（含重试），
+    供 /metrics 观察上游失败率和延迟。
     """
-    return await call_with_retry(
-        lambda: client.chat.completions.create(**kwargs),
-        max_attempts=settings.llm_retry_max_attempts,
-        base_seconds=settings.llm_retry_base_seconds,
-        cap_seconds=settings.llm_retry_cap_seconds,
-        circuit_target=circuit_target,
-    )
+    provider = circuit_target[0] if circuit_target else ""
+    model = str(kwargs.get("model", ""))
+    labels = {"provider": provider, "model": model}
+    started_at = perf_counter()
+    try:
+        result = await call_with_retry(
+            lambda: client.chat.completions.create(**kwargs),
+            max_attempts=settings.llm_retry_max_attempts,
+            base_seconds=settings.llm_retry_base_seconds,
+            cap_seconds=settings.llm_retry_cap_seconds,
+            circuit_target=circuit_target,
+        )
+    except Exception as error:
+        LLM_CALLS.inc({**labels, "outcome": type(error).__name__})
+        LLM_DURATION.observe(perf_counter() - started_at, labels)
+        raise
+    LLM_CALLS.inc({**labels, "outcome": "success"})
+    LLM_DURATION.observe(perf_counter() - started_at, labels)
+    return result

@@ -11,6 +11,8 @@ from ...core.cache import (
     set_generation_status,
 )
 from ...core.config import settings
+from ...core.lifecycle import is_shutting_down
+from ...core.metrics import SSE_ACTIVE
 from ...core.sse import sse_event
 from ...core.exceptions import BusinessError
 from ...core.stop_signal import StopWatcher, clear_stopped, mark_stopped
@@ -176,6 +178,7 @@ _FINAL_STATUS_BY_STOP_REASON = {
     None: COMPLETED,
     "stopped": CANCELLED,
     "disconnected": CANCELLED,
+    "shutdown": CANCELLED,
     "timed_out": TIMED_OUT,
 }
 
@@ -212,6 +215,7 @@ async def stream_ai_reply(
         return
 
     await _generation_slots.acquire()
+    SSE_ACTIVE.inc()
     try:
         async for event in _stream_generation(
             db,
@@ -226,6 +230,7 @@ async def stream_ai_reply(
         ):
             yield event
     finally:
+        SSE_ACTIVE.dec()
         _generation_slots.release()
 
 
@@ -284,6 +289,10 @@ async def _stream_generation(
                 )
                 stop_reason = "timed_out"
                 break
+            if is_shutting_down():
+                logger.info("服务停机，会话 %s 主动收尾", session_id)
+                stop_reason = "shutdown"
+                break
             if is_disconnected is not None and now >= next_disconnect_check:
                 next_disconnect_check = now + _DISCONNECT_CHECK_INTERVAL_SECONDS
                 if await is_disconnected():
@@ -334,7 +343,7 @@ async def _stream_generation(
 
     # 主动中断（停止/超时）时确定性地关闭上游流，不等 GC 回收连接；
     # 断连路径的连接由 httpx 的取消处理负责释放
-    if stop_reason in ("stopped", "timed_out"):
+    if stop_reason in ("stopped", "timed_out", "shutdown"):
         await stream.aclose()
 
     # 统一收场（全同步）：部分内容落库 + 终态流转 + 清信号

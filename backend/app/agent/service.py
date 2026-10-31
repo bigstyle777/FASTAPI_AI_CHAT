@@ -27,6 +27,8 @@ from ..core.cache import (
 from ..core.config import settings
 from ..core.sse import sse_event
 from ..core.exceptions import BusinessError
+from ..core.lifecycle import is_shutting_down
+from ..core.metrics import AGENT_RUNS, SSE_ACTIVE
 from ..core.stop_signal import (
     StopWatcher,
     clear_stopped,
@@ -144,6 +146,7 @@ async def agent_stream_service(
         return
 
     await _agent_slots.acquire()
+    SSE_ACTIVE.inc()
     try:
         async for event in _agent_stream_inner(
             db,
@@ -154,6 +157,7 @@ async def agent_stream_service(
         ):
             yield event
     finally:
+        SSE_ACTIVE.dec()
         _agent_slots.release()
 
 
@@ -262,6 +266,9 @@ async def _agent_stream_inner(
         next_disconnect_check = [0.0]
 
         async def should_stop() -> bool:
+            if is_shutting_down():
+                logger.info("服务停机，会话 %s 主动收尾", session_id)
+                return True
             if await stop_watcher.should_stop():
                 return True
             if is_disconnected is not None:
@@ -296,6 +303,7 @@ async def _agent_stream_inner(
             yield sse_event(event.type, event)
 
         status = _resolve_run_status(outcome, session_id)
+        AGENT_RUNS.inc({"status": status})
         used_model = outcome.usage.model or model
         used_provider = outcome.usage.provider or provider
         await run_blocking(
@@ -347,6 +355,7 @@ async def _agent_stream_inner(
 
     except Exception as error:
         logger.exception("Agent 运行失败")
+        AGENT_RUNS.inc({"status": "failed"})
         clear_stopped(session_id)
         await run_blocking(clear_generation_status, session_id)
         if tracer is not None and run is not None:
