@@ -1,8 +1,8 @@
 /**
  * axios 统一请求封装
- * - 请求自动携带 Authorization: Bearer <token>
- * - 统一解包响应 data
- * - 401 时清除凭证并广播 auth:unauthorized（App.vue 监听后跳转登录页）
+ * - 凭证走 httponly cookie（后端 set-cookie），浏览器自动携带，JS 无需也读不到 token
+ * - withCredentials 让跨域请求也带 cookie（dev 经 vite proxy 同源，生产经 nginx 同源）
+ * - 401 时广播 auth:unauthorized（App.vue 监听后跳转登录页）
  * - 网络/超时/服务端错误统一归一化为 ApiFailure，组件层无需散落 try/catch
  */
 import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig } from 'axios'
@@ -10,28 +10,18 @@ import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig } from '
 /** 统一请求结果：成功携带 data，失败携带用户可读的 message */
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; message: string }
 
-const TOKEN_KEY = 'token'
-
 export const http: AxiosInstance = axios.create({
   timeout: 15_000,
+  withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
 })
 
-// 请求拦截：注入 token
-http.interceptors.request.use((config) => {
-  const token = localStorage.getItem(TOKEN_KEY)
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
-  }
-  return config
-})
-
-// 响应拦截：401 统一登出（与项目 auth:unauthorized 事件约定一致）
+// 401 统一登出（凭证在 httponly cookie 里，前端清不掉，只能让后端 logout；
+// 这里只广播事件让 UI 跳转登录页）
 http.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem(TOKEN_KEY)
       window.dispatchEvent(new CustomEvent('auth:unauthorized'))
     }
     return Promise.reject(error)

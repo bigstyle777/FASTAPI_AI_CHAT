@@ -127,6 +127,11 @@ ADMIN_PATH_PREFIX = "/admin"
 
 
 def _extract_bearer_token(request: Request) -> str | None:
+    # 优先 cookie：httponly cookie JS 不可读，避免 XSS 偷 token。
+    # 回退 Authorization header：兼容旧客户端、curl、测试。
+    cookie_token = request.cookies.get(settings.session_cookie_name)
+    if cookie_token:
+        return cookie_token
     header = request.headers.get("authorization", "")
     if not header.lower().startswith("bearer "):
         return None

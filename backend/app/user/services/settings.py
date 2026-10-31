@@ -1,5 +1,6 @@
 from ...core import redis
 from ...core.config import settings
+from ...core.encryption import decrypt
 from ..repository import get_user_settings, save_user_settings
 
 USER_SETTINGS_CACHE_TTL_SECONDS = settings.user_settings_cache_ttl_seconds
@@ -67,10 +68,13 @@ def get_settings_service(db, user):
         _cache_settings(user["user_id"], result)
         return {"success": True, **result}
 
+    # DB 里存的是加密值（配置了 DATA_ENCRYPTION_KEY 时），读出来先解密再掩码
+    plain_api_key = decrypt(user_settings.api_key)
+    plain_embedding_key = decrypt(user_settings.embedding_api_key)
     result = {
-        "api_key": _mask_key(user_settings.api_key),
+        "api_key": _mask_key(plain_api_key),
         "provider": user_settings.provider or "deepseek",
-        "embedding_api_key": _mask_key(user_settings.embedding_api_key),
+        "embedding_api_key": _mask_key(plain_embedding_key),
         "embedding_base_url": user_settings.embedding_base_url or settings.rag_embedding_base_url,
         "embedding_model": user_settings.embedding_model or settings.rag_embedding_model,
     }
@@ -81,10 +85,11 @@ def get_settings_service(db, user):
 def save_settings_service(db, user, request):
     existing = get_user_settings(db, user["user_id"])
 
-    api_key = _resolve_key_on_save(request.api_key, existing.api_key if existing else None)
-    embedding_api_key = _resolve_key_on_save(
-        request.embedding_api_key, existing.embedding_api_key if existing else None
-    )
+    # existing 存的是加密值，解密成明文后才能和前端回传的掩码比对
+    current_api_key = decrypt(existing.api_key) if existing else None
+    current_embedding_key = decrypt(existing.embedding_api_key) if existing else None
+    api_key = _resolve_key_on_save(request.api_key, current_api_key)
+    embedding_api_key = _resolve_key_on_save(request.embedding_api_key, current_embedding_key)
 
     provider = (request.provider or "deepseek").strip().lower() or "deepseek"
     embedding_base_url = (request.embedding_base_url or "").strip()
@@ -100,9 +105,9 @@ def save_settings_service(db, user, request):
         embedding_model=embedding_model,
     )
     result = {
-        "api_key": _mask_key(user_settings.api_key),
+        "api_key": _mask_key(decrypt(user_settings.api_key)),
         "provider": user_settings.provider,
-        "embedding_api_key": _mask_key(user_settings.embedding_api_key),
+        "embedding_api_key": _mask_key(decrypt(user_settings.embedding_api_key)),
         "embedding_base_url": user_settings.embedding_base_url or settings.rag_embedding_base_url,
         "embedding_model": user_settings.embedding_model or settings.rag_embedding_model,
     }

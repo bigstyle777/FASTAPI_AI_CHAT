@@ -85,7 +85,9 @@ def get_user_ai_settings(user_id=None, db: Session | None = None):
     if user_id is not None and db is not None:
         row = get_user_settings(db, user_id)
         if row:
-            api_key = row.api_key
+            # DB 里存的是加密值（配置了 DATA_ENCRYPTION_KEY 时），解密成明文再用
+            from .encryption import decrypt
+            api_key = decrypt(row.api_key)
             provider = row.provider or "deepseek"
 
     return api_key, provider

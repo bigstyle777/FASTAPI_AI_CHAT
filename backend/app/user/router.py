@@ -1,6 +1,7 @@
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from ..core.cache import check_rate_limit
@@ -83,14 +84,29 @@ def create_captcha(request: Request):
 
 
 @router.post("/login", response_model=LoginResponse)
-def login(request: Request, body: LoginRequest, db: Database):
+def login(request: Request, response: Response, body: LoginRequest, db: Database):
     _check_auth_rate_limit(request, "login", LOGIN_RATE_LIMIT, 60)
-    return login_user(db, body)
+    result = login_user(db, body)
+    if result.get("success") and result.get("access_token"):
+        # 凭证放 httponly cookie：JS 读不到，XSS 偷不走。secure 按环境自动
+        # （production 走 HTTPS 才发，dev 不限）。max_age 与 token TTL 对齐。
+        response.set_cookie(
+            key=settings.session_cookie_name,
+            value=result["access_token"],
+            httponly=True,
+            secure=settings.is_production,
+            samesite="lax",
+            max_age=settings.access_token_ttl_seconds,
+            path="/",
+        )
+    return result
 
 
 @router.post("/logout", response_model=LogoutResponse)
-def logout(user: CurrentUser, token: CurrentToken):
-    return logout_user(token)
+def logout(response: Response, user: CurrentUser, token: CurrentToken):
+    logout_user(token)
+    response.delete_cookie(settings.session_cookie_name, path="/")
+    return {"success": True, "message": "logout successful"}
 
 
 @router.get("/me", response_model=UserProfileResponse)

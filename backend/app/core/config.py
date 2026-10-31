@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     # 默认关闭：公开注册的站点开着它等于谁都能白嫖服务器额度；
     # 自用部署想省事可显式设 SERVER_API_KEY_FALLBACK_ENABLED=true
     server_api_key_fallback_enabled: bool = False
+    # 敏感字段（用户 API Key 等）对称加密密钥。未配置则明文存储（兼容旧行为）。
+    # 生产环境务必配置；改密钥后旧密文无法解密（视作未配置）。
+    # 生成：python -c "import secrets; print(secrets.token_urlsafe(32))"
+    data_encryption_key: str | None = None
+    # 登录态 cookie 名。httponly + SameSite=Lax，JS 不可读，防 XSS 偷 token。
+    # secure 标志按 ENVIRONMENT 自动：production 走 HTTPS 才发，dev 不限。
+    session_cookie_name: str = "aichat_token"
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str | None = None
     deepseek_base_url: str = "https://api.deepseek.com"

@@ -1,4 +1,4 @@
-import { apiJson, getToken } from './client'
+import { apiJson } from './client'
 import type {
   ActionResponse,
   RagDocumentListResponse,
@@ -24,14 +24,11 @@ export function uploadDocumentStream(
   const formData = new FormData()
   formData.append('file', file, file.name)
 
-  const token = getToken()
-  const headers: Record<string, string> = {}
-  if (token) headers.Authorization = `Bearer ${token}`
-
+  // 凭证走 httponly cookie（credentials:'include'），无需手动 Authorization
   void fetch('/rag/upload', {
     method: 'POST',
     body: formData,
-    headers,
+    credentials: 'include',
     signal: controller.signal,
   })
     .then(async (response) => {

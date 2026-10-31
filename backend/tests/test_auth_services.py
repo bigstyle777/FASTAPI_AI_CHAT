@@ -315,6 +315,40 @@ def test_save_settings_keeps_key_when_mask_returned(db, _mock_redis):
     assert row.api_key == "sk-real-value"
 
 
+def test_api_key_is_encrypted_at_rest(db, _mock_redis, monkeypatch):
+    """配置 DATA_ENCRYPTION_KEY 后，DB 里存的是密文，读出来是明文。"""
+    from app.core import encryption
+    from app.user.repository import get_user_settings
+
+    monkeypatch.setattr(encryption.settings, "data_encryption_key", "test-encryption-key-rotate-me")
+    # 加密模块缓存了 _warned_no_key，重置以观察新行为
+    encryption._warned_no_key = False
+
+    ctx = _user_ctx(db)
+    save_settings_service(
+        db,
+        ctx,
+        SimpleNamespace(
+            api_key="sk-secret-123",
+            provider="deepseek",
+            embedding_api_key="",
+            embedding_base_url="",
+            embedding_model="",
+        ),
+    )
+
+    # DB 原始字段是带前缀的密文，不是明文
+    row = get_user_settings(db, ctx["user_id"])
+    assert row.api_key.startswith("enc::")
+    assert "sk-secret-123" not in row.api_key
+
+    # 经 service 读出来是明文掩码（末4位）
+    result = get_settings_service(db, ctx)
+    assert result["api_key"] == "***1234" or result["api_key"].endswith("123")
+    # 直接解密拿明文
+    assert encryption.decrypt(row.api_key) == "sk-secret-123"
+
+
 # ---------------------------------------------------------------------------
 # RBAC
 # ---------------------------------------------------------------------------
