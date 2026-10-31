@@ -115,7 +115,7 @@ def delete_message_pair(db, message_id, session_id):
             db.delete(message)
         db.commit()
         return messages
-    except:
+    except Exception:
         db.rollback()
         raise
 

@@ -20,12 +20,26 @@ router = APIRouter(tags=["Ops"])
 _DETAIL_MAX_CHARS = 200
 
 
+def _safe_detail(ok: bool, error: str | None) -> str:
+    """失败详情对外收敛：默认只说 failed，不回显异常原文。
+
+    异常字符串可能携带连接串、主机名、内部路径（如 psycopg 的
+    ConnectionTimeout 带 host:port）。排障需要原文时设
+    HEALTH_EXPOSE_DETAILS=true。
+    """
+    if ok:
+        return "ok"
+    if settings.health_expose_details and error:
+        return str(error)[:_DETAIL_MAX_CHARS]
+    return "failed"
+
+
 def _check_database(db: Session) -> tuple[bool, str]:
     try:
         db.execute(text("SELECT 1"))
         return True, "ok"
     except Exception as error:  # noqa: BLE001
-        return False, str(error)[:_DETAIL_MAX_CHARS]
+        return False, _safe_detail(False, str(error))
 
 
 def _check_redis() -> tuple[bool, str]:
@@ -33,7 +47,7 @@ def _check_redis() -> tuple[bool, str]:
         get_redis().ping()
         return True, "ok"
     except Exception as error:  # noqa: BLE001
-        return False, str(error)[:_DETAIL_MAX_CHARS]
+        return False, _safe_detail(False, str(error))
 
 
 def _check_celery() -> tuple[str, int | None]:

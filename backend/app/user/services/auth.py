@@ -5,8 +5,10 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 
 from ...admin.service.rbac import (
+    DEFAULT_ROLE_USER,
     build_user_context,
     get_default_role,
+    get_role_by_name,
     sync_default_rbac,
 )
 from ...core import redis
@@ -23,12 +25,13 @@ from ...core.exceptions import BusinessError
 from ..repository import create_user, get_user_by_id, get_user_by_username
 from .captcha import _verify_captcha
 
-SECRET_KEY = settings.jwt_secret_key
-ALGORITHM = settings.jwt_algorithm
 ACCESS_TOKEN_TTL_SECONDS = settings.access_token_ttl_seconds
 USER_CACHE_TTL_SECONDS = settings.user_cache_ttl_seconds
 TOKEN_KEY_PREFIX = "auth:token:"
 USER_KEY_PREFIX = "user:profile:"
+
+# 登录失败统一文案：避免"用户不存在"与"密码错误"的差异被用来枚举用户名
+_LOGIN_FAILED_MESSAGE = "用户名或密码错误"
 
 security = HTTPBearer()
 
@@ -122,7 +125,10 @@ def get_current_user(
 
 
 def register_user(db, request):
-    sync_default_rbac(db)
+    # 角色表由启动时的 sync_default_rbac 建好；这里只在校验角色缺失时
+    # 才补一次（冷启动直连 service 的场景），正常注册路径零额外写库
+    if get_role_by_name(db, DEFAULT_ROLE_USER) is None:
+        sync_default_rbac(db)
 
     username = request.username.strip()
     password = request.password.strip()
@@ -146,10 +152,10 @@ def login_user(db, request):
     user = get_user_by_username(db, username)
 
     if not user:
-        return {"success": False, "message": "user not found"}
+        return {"success": False, "message": _LOGIN_FAILED_MESSAGE}
 
     if not verify_password(password, user.password):
-        return {"success": False, "message": "invalid password"}
+        return {"success": False, "message": _LOGIN_FAILED_MESSAGE}
 
     token = create_login_session(user)
     return {

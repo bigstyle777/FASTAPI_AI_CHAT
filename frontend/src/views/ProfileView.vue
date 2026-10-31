@@ -196,13 +196,16 @@ onMounted(async () => {
               id="apiKeyInput"
               v-model="apiKey"
               :type="showApiKey ? 'text' : 'password'"
-              placeholder="请输入聊天模型 API Key"
+              placeholder="留空保持现有 Key 不变；填写则覆盖"
               autocomplete="off"
             >
             <button class="toggle-btn" type="button" @click="showApiKey = !showApiKey">
               {{ showApiKey ? '隐藏' : '显示' }}
             </button>
           </div>
+          <p class="field-hint">
+            已保存的 Key 仅显示末尾 4 位掩码；不修改直接保存即可，无需重新输入。
+          </p>
         </div>
         <div class="form-group">
           <label for="providerSelect">聊天 Provider</label>

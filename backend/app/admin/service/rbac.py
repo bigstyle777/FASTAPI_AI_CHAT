@@ -94,16 +94,21 @@ def sync_default_rbac(db):
 
 
 def get_default_role(db):
-    sync_default_rbac(db)
     role = get_role_by_name(db, DEFAULT_ROLE_USER)
+    if not role:
+        # 只有角色确实缺失时才重建（正常路径由启动时的 lifespan 同步过）
+        sync_default_rbac(db)
+        role = get_role_by_name(db, DEFAULT_ROLE_USER)
     if not role:
         raise RuntimeError("default role not initialized")
     return role
 
 
 def get_admin_role(db):
-    sync_default_rbac(db)
     role = get_role_by_name(db, DEFAULT_ROLE_ADMIN)
+    if not role:
+        sync_default_rbac(db)
+        role = get_role_by_name(db, DEFAULT_ROLE_ADMIN)
     if not role:
         raise RuntimeError("admin role not initialized")
     return role
@@ -221,29 +226,42 @@ def get_role_permissions(db, role_id: int):
 
 
 def ensure_bootstrap_admin(db, username: str | None, password: str | None):
+    """首次启动时创建引导管理员；之后的启动不做任何重置。
+
+    只在用户不存在时创建。已存在的同名用户（无论角色是什么）不会被
+    改密码、不会被提权——否则：
+    1. 管理员改过的密码每次重启都被 .env 覆盖回去，等于永久后门；
+    2. 任何人抢先注册同名账号，等一次重启就能白拿 admin。
+
+    忘记密码的恢复方式：改 .env 里的用户名（或直接删库重建）。
+    """
     if not username or not password:
         return None
 
-    if password.strip() == _DEFAULT_BOOTSTRAP_PASSWORD:
-        logger.warning(
-            "[\u5b89\u5168\u8b66\u544a] \u5f15\u5bfc\u7ba1\u7406\u5458\u4f7f\u7528\u4e86\u9ed8\u8ba4\u5bc6\u7801 'admin123456'\uff0c"
-            "\u8bf7\u5c3d\u5feb\u5728 .env \u4e2d\u4fee\u6539 BOOTSTRAP_ADMIN_PASSWORD \u6216\u767b\u5f55\u540e\u66f4\u6539\u5bc6\u7801\u3002"
-        )
-
     sync_default_rbac(db)
     user = get_user_by_username(db, username.strip())
-    admin_role = get_admin_role(db)
     if user:
-        user.role_id = admin_role.id
-        user.password = hash_password(password.strip())
-        db.commit()
-        db.refresh(user)
+        admin_role = get_role_by_name(db, DEFAULT_ROLE_ADMIN)
+        if admin_role is not None and user.role_id != admin_role.id:
+            logger.warning(
+                "[安全警告] 已存在同名用户 %r 但不是 admin，本次启动不自动提权。"
+                "如确需授权，请由现有管理员在后台手动调整角色。",
+                username,
+            )
         return user
 
+    if password.strip() == _DEFAULT_BOOTSTRAP_PASSWORD:
+        logger.warning(
+            "[安全警告] 引导管理员使用了默认密码 'admin123456'，"
+            "请尽快在 .env 中修改 BOOTSTRAP_ADMIN_PASSWORD 或登录后更改密码。"
+        )
+
+    admin_role = get_admin_role(db)
     created = create_user(
         db,
         username.strip(),
         hash_password(password.strip()),
         role_id=admin_role.id,
     )
+    logger.info("已创建引导管理员账号 %r", username)
     return created

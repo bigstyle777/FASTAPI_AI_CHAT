@@ -46,6 +46,7 @@ def _ensure_admin(user: dict[str, Any]):
 
 @router.get("/bootstrap")
 def bootstrap_admin(user: CurrentUser, db: Database):
+    """手动重置默认角色/权限到出厂定义（仅这个端点会做，请求路径不再自动同步）。"""
     _ensure_admin(user)
     sync_default_rbac(db)
     return {
@@ -57,7 +58,6 @@ def bootstrap_admin(user: CurrentUser, db: Database):
 @router.get("/dashboard")
 def dashboard(user: CurrentUser, db: Database):
     _ensure_admin(user)
-    sync_default_rbac(db)
 
     users = get_users_with_roles(db)
     permissions = get_permissions(db)
@@ -78,7 +78,6 @@ def dashboard(user: CurrentUser, db: Database):
 @router.get("/users", response_model=list[AdminUserResponse])
 def list_users(user: CurrentUser, db: Database):
     _ensure_admin(user)
-    sync_default_rbac(db)
     return [build_user_context(item) for item in get_users_with_roles(db)]
 
 
@@ -87,7 +86,6 @@ def update_user_role(
     user_id: int, request: UpdateUserRoleRequest, user: CurrentUser, db: Database
 ):
     _ensure_admin(user)
-    sync_default_rbac(db)
 
     target_user = next(
         (item for item in get_users_with_roles(db) if item.id == user_id), None
@@ -106,14 +104,12 @@ def update_user_role(
 @router.get("/roles", response_model=list[RoleResponse])
 def list_roles(user: CurrentUser, db: Database):
     _ensure_admin(user)
-    sync_default_rbac(db)
     return list_roles_with_permissions(db)
 
 
 @router.post("/roles", response_model=RoleResponse)
 def create_role_api(request: RoleCreateRequest, user: CurrentUser, db: Database):
     _ensure_admin(user)
-    sync_default_rbac(db)
 
     existing = get_role_by_name(db, request.name.strip())
     if existing:
@@ -141,7 +137,6 @@ def update_role_permissions(
     db: Database,
 ):
     _ensure_admin(user)
-    sync_default_rbac(db)
     set_role_permissions(db, role_id, request.permission_codes)
     return {"success": True, "message": "permissions updated"}
 
@@ -149,7 +144,6 @@ def update_role_permissions(
 @router.get("/permissions", response_model=list[PermissionResponse])
 def list_permissions(user: CurrentUser, db: Database):
     _ensure_admin(user)
-    sync_default_rbac(db)
     permissions = get_permissions(db)
     return [
         {
@@ -165,7 +159,6 @@ def list_permissions(user: CurrentUser, db: Database):
 @router.get("/roles/{role_id}")
 def get_role_detail(user: CurrentUser, role_id: int, db: Database):
     _ensure_admin(user)
-    sync_default_rbac(db)
 
     role = get_role_by_id(db, role_id)
     if not role:

@@ -30,8 +30,14 @@ def _llm_timeout() -> httpx.Timeout:
 
 
 def _resolve_provider(api_key=None, provider="deepseek"):
-    """解析出 (api_key, base_url, model)。api_key 为 None 表示没有可用 Key。"""
-    key = api_key or settings.deepseek_api_key or settings.openai_api_key
+    """解析出 (api_key, base_url, model)。api_key 为 None 表示没有可用 Key。
+
+    用户没存 Key 时是否回落到服务器全局 Key 由
+    settings.server_api_key_fallback_enabled 控制（默认不回落）。
+    """
+    key = api_key
+    if not key and settings.server_api_key_fallback_enabled:
+        key = settings.deepseek_api_key or settings.openai_api_key
     if not key:
         return None, "", ""
 
@@ -119,7 +125,9 @@ def resolve_model_targets(api_key=None, provider="deepseek") -> list[ModelTarget
     provider = (provider or "deepseek").lower()
     base_url, model = _provider_config(provider)
     is_user_key = bool(api_key)
-    key = api_key or _env_key(provider)
+    key = api_key
+    if not key and settings.server_api_key_fallback_enabled:
+        key = _env_key(provider)
     if not key or not model:
         return []
 

@@ -23,11 +23,19 @@ class Settings(BaseSettings):
 
     deepseek_api_key: str | None = None
     openai_api_key: str | None = None
+    # 是否允许"用户没存 Key"时回落到服务器全局 Key。
+    # 默认关闭：公开注册的站点开着它等于谁都能白嫖服务器额度；
+    # 自用部署想省事可显式设 SERVER_API_KEY_FALLBACK_ENABLED=true
+    server_api_key_fallback_enabled: bool = False
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str | None = None
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str | None = None
     ai_model: str | None = None
+    # 部署环境：dev 保持宽松（默认密钥仅警告并随机替换）；
+    # production 下默认/过短 JWT 密钥直接拒绝启动，避免多副本随机密钥
+    # 导致登录态随机失效、或弱密钥被离线爆破
+    environment: str = "dev"
     jwt_secret_key: str = "myselectkey"
     jwt_algorithm: str = "HS256"
     redis_url: str = "redis://127.0.0.1:6379/0"
@@ -137,7 +145,14 @@ class Settings(BaseSettings):
     # 队列积压超过该值只标记 degraded，不摘流（避免边缘抖动误伤）
     celery_queue_backlog_threshold: int = 100
     metrics_enabled: bool = True
+    # 配置后 /metrics 必须携带 Authorization: Bearer <token>（或 ?token=）。
+    # 未配置时只放行回环地址——Prometheus 抓取器通常与后端同机或同网，
+    # 公网部署请务必设置 token 或由反代加访问控制
+    metrics_token: str | None = None
     log_json: bool = False
+    # /health/ready 默认不回显 DB/Redis 异常原文（可能带连接串/主机名），
+    # 排障时临时设为 true
+    health_expose_details: bool = False
     # 只有直连方 IP 在名单内才采信 X-Forwarded-For；"*" 表示全信任
     trusted_proxy_ips: str = ""
     # 停机宽限期：与 docker-compose / uvicorn 的 graceful shutdown 对齐
@@ -173,6 +188,10 @@ class Settings(BaseSettings):
     def is_default_jwt_secret(self) -> bool:
         """检测 JWT 密钥是否为不安全的默认值。"""
         return self.jwt_secret_key in ("myselectkey", "change-me", "")
+
+    @property
+    def is_production(self) -> bool:
+        return self.environment.strip().lower() == "production"
 
     @property
     def trusted_proxy_ips_list(self) -> list[str]:

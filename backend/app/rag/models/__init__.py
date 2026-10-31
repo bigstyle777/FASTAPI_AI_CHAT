@@ -1,10 +1,11 @@
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ...core.config import settings
+from ...core.constants import EMBEDDING_DIMENSION
 from ...core.database import Base
 
 
@@ -72,9 +73,20 @@ class RagChunkEmbedding(Base):
     model: Mapped[str] = mapped_column(String(120), nullable=False)
     dimension: Mapped[int] = mapped_column(Integer, nullable=False)
     embedding: Mapped[list[float]] = mapped_column(
-        Vector(settings.rag_embedding_dimension),
+        Vector(EMBEDDING_DIMENSION),
         nullable=False,
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     chunk: Mapped["RagChunk"] = relationship(back_populates="embedding")
+
+    __table_args__ = (
+        # 与迁移对齐：声明 ivfflat 索引，避免 autogenerate 误生成 DROP。
+        Index(
+            "ix_rag_chunk_embeddings_embedding_ivfflat",
+            "embedding",
+            postgresql_using="ivfflat",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+            postgresql_with={"lists": 100},
+        ),
+    )

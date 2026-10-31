@@ -28,7 +28,7 @@ if str(BACKEND_DIR) not in sys.path:
 import app.chat.services.llm as llm  # noqa: E402
 import app.core.ai_client as ai_client  # noqa: E402
 from app.chat.schemas import StreamDeltaEvent, StreamUsageEvent, TokenUsage  # noqa: E402
-from app.core.ai_client import ModelTarget, resolve_model_targets  # noqa: E402
+from app.core.ai_client import ModelTarget, get_client, resolve_model_targets  # noqa: E402
 
 BASE = "https://api.test/v1"
 
@@ -79,6 +79,8 @@ def test_system_key_can_cross_provider(monkeypatch):
     monkeypatch.setattr(ai_client.settings, "openai_api_key", "system-openai")
     monkeypatch.setattr(ai_client.settings, "deepseek_model", "deepseek-chat")
     monkeypatch.setattr(ai_client.settings, "openai_model", "gpt-4o-mini")
+    # 系统 Key 回落是显式开启的部署选项，默认关闭
+    monkeypatch.setattr(ai_client.settings, "server_api_key_fallback_enabled", True)
 
     targets = resolve_model_targets(None, "deepseek")
 
@@ -90,8 +92,19 @@ def test_system_key_can_cross_provider(monkeypatch):
 def test_fallback_disabled_returns_single_target(monkeypatch):
     monkeypatch.setattr(ai_client.settings, "llm_fallback_enabled", False)
     monkeypatch.setattr(ai_client.settings, "deepseek_api_key", "system-deepseek")
+    monkeypatch.setattr(ai_client.settings, "server_api_key_fallback_enabled", True)
 
     assert len(resolve_model_targets(None, "deepseek")) == 1
+
+
+def test_no_server_key_fallback_by_default(monkeypatch):
+    """安全默认：未显式开启回落时，服务器全局 Key 不可见。"""
+    monkeypatch.setattr(ai_client.settings, "llm_fallback_enabled", True)
+    monkeypatch.setattr(ai_client.settings, "deepseek_api_key", "system-deepseek")
+    monkeypatch.setattr(ai_client.settings, "server_api_key_fallback_enabled", False)
+
+    assert resolve_model_targets(None, "deepseek") == []
+    assert get_client(None) is None
 
 
 def test_no_key_returns_empty_targets(monkeypatch):

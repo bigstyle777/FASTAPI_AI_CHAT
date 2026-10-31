@@ -104,14 +104,15 @@ def test_login_rejects_wrong_captcha(db, _mock_redis):
 def test_login_rejects_unknown_user(db, _mock_redis):
     result = _login_with_valid_captcha(db, _mock_redis, "ghost", "secret123")
     assert result["success"] is False
-    assert result["message"] == "user not found"
+    # 登录失败统一文案，避免用户名枚举
+    assert result["message"] == "用户名或密码错误"
 
 
 def test_login_rejects_wrong_password(db, _mock_redis):
     register_user(db, _register_request())
     result = _login_with_valid_captcha(db, _mock_redis, "alice", "wrong-pass")
     assert result["success"] is False
-    assert result["message"] == "invalid password"
+    assert result["message"] == "用户名或密码错误"
 
 
 def test_login_success_returns_resolvable_token(db, _mock_redis):
@@ -227,7 +228,7 @@ def test_get_settings_reads_saved_row_and_caches(db, _mock_redis):
     _mock_redis.clear()
 
     result = get_settings_service(db, ctx)
-    assert result["api_key"] == "sk-test"
+    assert result["api_key"] == "***test"  # 回显掩码
     assert result["provider"] == "openai"
 
     # DB 回退后应回写缓存
@@ -269,13 +270,49 @@ def test_save_settings_roundtrip_updates_db_and_cache(db, _mock_redis):
         ),
     )
     assert result["success"] is True
-    assert result["api_key"] == "sk-new"
+    assert result["api_key"] == "***-new"  # 回显掩码（末4位）
     assert result["embedding_model"] == "bge-m3"
 
     # 后续读取（走缓存）应与保存结果一致
     cached = get_settings_service(db, ctx)
-    assert cached["api_key"] == "sk-new"
+    assert cached["api_key"] == "***-new"
     assert cached["embedding_base_url"] == "https://emb.example.com/v1"
+
+
+def test_save_settings_keeps_key_when_mask_returned(db, _mock_redis):
+    """前端把回显的掩码原样回传时，不应覆盖已保存的真实 Key。"""
+    from app.user.repository import get_user_settings
+
+    ctx = _user_ctx(db)
+    save_settings_service(
+        db,
+        ctx,
+        SimpleNamespace(
+            api_key="sk-real-value",
+            provider="deepseek",
+            embedding_api_key="",
+            embedding_base_url="",
+            embedding_model="",
+        ),
+    )
+
+    # 第二次保存：把掩码原样回传（模拟前端"没改输入框就点保存"）
+    masked = get_settings_service(db, ctx)["api_key"]
+    save_settings_service(
+        db,
+        ctx,
+        SimpleNamespace(
+            api_key=masked,
+            provider="deepseek",
+            embedding_api_key="",
+            embedding_base_url="",
+            embedding_model="",
+        ),
+    )
+
+    # DB 里的真实 Key 没被掩码覆盖
+    row = get_user_settings(db, ctx["user_id"])
+    assert row.api_key == "sk-real-value"
 
 
 # ---------------------------------------------------------------------------
@@ -336,15 +373,37 @@ def test_set_role_permissions_replaces(db):
     assert sorted(p.code for p in role.permissions) == ["chat:read"]
 
 
-def test_ensure_bootstrap_admin_creates_then_updates(db):
+def test_ensure_bootstrap_admin_creates_once_then_leaves_alone(db):
     created = ensure_bootstrap_admin(db, "root", "root-password-1")
     assert created is not None
     assert created.role.name == "admin"
     assert verify_password("root-password-1", created.password)
 
-    updated = ensure_bootstrap_admin(db, "root", "root-password-2")
-    assert updated.id == created.id
-    assert verify_password("root-password-2", updated.password)
+    # 再次启动：既不改密码也不提权（否则管理员改密码会被 .env 覆盖，等于后门）
+    other = ensure_bootstrap_admin(db, "root", "root-password-2")
+    assert other.id == created.id
+    assert verify_password("root-password-1", other.password)
+    assert other.role.name == "admin"
+
+
+def test_ensure_bootstrap_admin_never_promotes_existing_user(db):
+    """抢先注册同名账号的人不能等一次重启白拿 admin。"""
+    from app.admin.service.rbac import DEFAULT_ROLE_USER, sync_default_rbac
+
+    sync_default_rbac(db)
+    from app.user.repository import create_user, get_user_by_username
+    from app.core.security import hash_password
+
+    user_role = None
+    from app.admin.repository import get_role_by_name
+
+    user_role = get_role_by_name(db, DEFAULT_ROLE_USER)
+    create_user(db, "hacker", hash_password("hacker-pass"), role_id=user_role.id)
+
+    result = ensure_bootstrap_admin(db, "hacker", "whatever-new-pass")
+    assert result is not None
+    assert result.role.name == DEFAULT_ROLE_USER
+    assert verify_password("hacker-pass", result.password)
 
 
 def test_ensure_bootstrap_admin_noop_without_credentials(db):

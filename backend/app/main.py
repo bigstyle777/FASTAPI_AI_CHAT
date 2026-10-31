@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """应用生命周期：启动时初始化安全配置，关闭时清理资源。"""
     _validate_jwt_secret()
+    _validate_embedding_dimension()
     with SessionLocal() as db:
         sync_default_rbac(db)
         ensure_bootstrap_admin(
@@ -75,8 +76,19 @@ async def lifespan(app: FastAPI):
 
 
 def _validate_jwt_secret():
-    """启动时检测 JWT 密钥安全性。默认弱密钥会生成随机密钥并警告。"""
+    """启动时检测 JWT 密钥安全性。
+
+    - production：默认值或长度不足 32 的密钥直接拒绝启动（fail-fast），
+      避免各副本各自随机生成密钥导致登录态随机失效；
+    - dev：沿用"警告 + 本次启动随机替换"，方便本地快速起服务。
+    """
     if settings.is_default_jwt_secret:
+        if settings.is_production:
+            raise RuntimeError(
+                "JWT_SECRET_KEY 未设置或仍为默认值，生产环境拒绝启动。"
+                "请在 .env 中设置强随机密钥（至少 32 字符），例如：\n"
+                f"  JWT_SECRET_KEY={secrets.token_urlsafe(48)}"
+            )
         random_secret = secrets.token_urlsafe(48)
         settings.jwt_secret_key = random_secret
         logger.warning(
@@ -86,6 +98,27 @@ def _validate_jwt_secret():
             "本次启动已生成随机密钥，但服务重启后登录态将失效。\n"
             "请在 .env 中设置一个强随机密钥（至少 32 字符），例如：\n"
             f"  JWT_SECRET_KEY={secrets.token_urlsafe(32)}\n" + "=" * 70
+        )
+    elif settings.is_production and len(settings.jwt_secret_key) < 32:
+        raise RuntimeError(
+            f"JWT_SECRET_KEY 长度不足（当前 {len(settings.jwt_secret_key)} 字符，"
+            "要求至少 32），生产环境拒绝启动。"
+        )
+
+
+def _validate_embedding_dimension():
+    """校验配置的向量维度与模型/迁移固定维度一致。
+
+    模型列维度是迁移里硬编码的，settings 改了配置不会自动改表结构，
+    不一致时插入向量会报维度不匹配。这里在启动期提前暴露。
+    """
+    from .constants import EMBEDDING_DIMENSION
+
+    if settings.rag_embedding_dimension != EMBEDDING_DIMENSION:
+        raise RuntimeError(
+            f"RAG_EMBEDDING_DIMENSION={settings.rag_embedding_dimension} 与模型固定维度 "
+            f"{EMBEDDING_DIMENSION} 不一致。请先写好维度变更的 alembic 迁移，"
+            "再调整配置值。"
         )
 
 
@@ -124,12 +157,40 @@ app.include_router(memory_router)
 app.include_router(admin_router)
 
 
+# 回环地址（含 TestClient 的虚拟地址）：同机访问视为可信
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
+
+
 @app.get("/metrics")
-def metrics_endpoint():
-    """Prometheus 文本格式指标；默认只应部署在内网或由反代加访问控制。"""
+def metrics_endpoint(request: Request):
+    """Prometheus 文本格式指标。
+
+    访问控制：
+    - 配置了 METRICS_TOKEN：要求 Authorization: Bearer <token>（或 ?token=）
+    - 未配置：仅放行回环地址，公网直接访问返回 403
+    """
     if not settings.metrics_enabled:
         return JSONResponse(
             status_code=404, content={"success": False, "message": "metrics disabled"}
+        )
+    if settings.metrics_token:
+        provided = request.headers.get("authorization", "")
+        if provided.lower().startswith("bearer "):
+            provided = provided[7:].strip()
+        if not provided:
+            provided = request.query_params.get("token", "")
+        if provided != settings.metrics_token:
+            return JSONResponse(
+                status_code=403,
+                content={"success": False, "message": "metrics token required"},
+            )
+    elif (request.client.host if request.client else "") not in _LOOPBACK_HOSTS:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "success": False,
+                "message": "metrics only allowed from loopback; set METRICS_TOKEN to enable remote access",
+            },
         )
     refresh_queue_length()
     return PlainTextResponse(

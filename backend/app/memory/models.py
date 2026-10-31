@@ -29,7 +29,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from ..core.config import settings
+from ..core.constants import EMBEDDING_DIMENSION
 from ..core.database import Base
 
 
@@ -71,7 +71,7 @@ class Memory(Base):
     )
 
     embedding: Mapped[list[float] | None] = mapped_column(
-        Vector(settings.rag_embedding_dimension),
+        Vector(EMBEDDING_DIMENSION),
         nullable=True,
     )
     # 列名是 metadata，但 DeclarativeBase 自带 .metadata 属性，
@@ -122,6 +122,16 @@ class Memory(Base):
             "key",
             unique=True,
             postgresql_where=text("type = 'semantic'"),
+        ),
+        # 向量检索索引。声明在模型里是为了和迁移对齐——否则
+        # alembic autogenerate 会"发现"数据库多出这个索引而生成 DROP，
+        # 向量检索无声退化为全表扫描。
+        Index(
+            "ix_memories_embedding_ivfflat",
+            "embedding",
+            postgresql_using="ivfflat",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+            postgresql_with={"lists": 100},
         ),
     )
 
